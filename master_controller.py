@@ -4,12 +4,15 @@ import threading
 import sqlite3
 import os
 import util
+import time
 
 
 # config settings
 database = "database.db"
 bufsize = 1024
-
+restart_window = 3.0
+wait_interval = .1
+# status: new -> connected -> restart -> lost
 
 class SlaveNode:
     def __init__(self):
@@ -50,6 +53,7 @@ class Master:
     def __init__(self):
         # member variables
         self.nodes = []
+        self.ready = False
 
         # locks
         self.nodes_lock = threading.Lock()
@@ -68,6 +72,32 @@ class Master:
         welcome_thread.start()
 
         # start the synchronization period for already connected nodes
+        wait_time = restart_window
+        if len(self.nodes) > 0:
+            initial_length = len(self.nodes)
+            while len([x for x in self.nodes if x.status == "connected"]) < initial_length and wait_time > 0:
+                wait_time -= wait_interval
+                time.sleep(wait_interval)
+
+        # any nodes that haven't reconnected are now lost
+        lost_nodes = [x for x in self.nodes if x.status == "restart"]
+        for node in lost_nodes:
+            self.lose_node(node)
+        # any new nodes are now connected
+        lost_nodes = [x for x in self.nodes if x.status == "new"]
+        for node in lost_nodes:
+            node.status = "connected"
+            self.update_slave_node(node)
+
+        # ready to begin normal execution
+        self.ready = True
+
+    def lose_node(self, node):
+        node.status = "lost"
+
+        # start recovery stuff here
+        self.update_slave_node(node)
+        return
 
     def accept_new_node(self, node):
         # kick off a new thread to handle the initial handshake
@@ -80,7 +110,11 @@ class Master:
         :param node:
         :return:
         """
-        node.status = "connected"
+        if self.ready:
+            node.status = "connected"
+        else:
+            node.status = "new"
+
         node.id = util.i_from_bytes(node.socket.recv(bufsize))
 
         # if id == -1 then it's a new node
@@ -90,14 +124,19 @@ class Master:
             node.socket.sendall(util.i_to_bytes(node.id))
             # get the storage space of the new node
             node.storage_space = util.i_from_bytes(node.socket.recv(bufsize))
-            # add the node to the list of nodes
 
+            self.update_slave_node(node)
+            # add the node to the list of nodes
             # LOCK
             self.nodes_lock.acquire()
             # CRITICAL SECTION
             self.nodes.append(node)
             # UNLOCK
             self.nodes_lock.release()
+        else:
+            # check the case where connecting node doesn't give a valid id
+            existing_node = self.get_slave_node(node.id)
+            # TODO
 
     def setup_db(self):
         # open the connection
@@ -135,7 +174,7 @@ class Master:
         conn = sqlite3.connect(database)
         c = conn.cursor()
 
-        c.execute('SELECT * FROM tbl_slave_node')
+        c.execute("SELECT * FROM tbl_slave_node WHERE status = 'restart'")
 
         rows = c.fetchall()
         nodes = []
@@ -204,15 +243,6 @@ class Master:
 def main(args):
     # set up the master controller
     master = Master()
-
-    # open the connection
-    x = master.get_slave_node(1)
-    print(x.status)
-    # set up the main welcoming connection
-    #welcome_activity = WelcomeSocket(new_client_callback=master.accept_new_node)
-    #welcome_thread = threading.Thread(target=welcome_activity.open_welcome_conn)
-    #welcome_thread.start()
-
     return
 
 
