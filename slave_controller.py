@@ -71,8 +71,14 @@ class Slave:
 
             if command == "OPEN":
                 self.socket.sendall(util.s_to_bytes("OPEN"))
+            elif command == "CLOSE":
+                print("Close command received")
+                break;
             else:
                 print("unrecognized command")
+
+        # close the open socket
+        self.socket.close()
 
 
 def main(args):

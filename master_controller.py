@@ -168,12 +168,16 @@ class Master:
         # if id == -1 then it's a new node
         if node.id == -1:
             self.insert_slave_node(node)
+            print("New node connected")
         else:
             # check the case where connecting node doesn't give a valid id
             existing_node = self.get_slave_node(node.id)
             if existing_node is None:
                 # treat it like a new node
                 self.insert_slave_node(node)
+                print("Invalid node connected")
+            else:
+                print("Existing node connected")
 
         # send id to the node
         node.socket.sendall(util.i_to_bytes(node.id))
@@ -194,11 +198,19 @@ class Master:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
         # Create the tables
+        c.execute('''CREATE TABLE tbl_folder
+                    (id INTEGER NOT NULL PRIMARY KEY,
+                     parent_id INTEGER NOT NULL,
+                     name TEXT NOT NULL,
+                     FOREIGN KEY(parent_id) REFERENCES tbl_folder(id))''')
+
         c.execute('''CREATE TABLE tbl_file
                       (id INTEGER NOT NULL PRIMARY KEY,
                        name TEXT NOT NULL,
                        size BIGINT NOT NULL,
-                       upload_date TEXT NOT NULL)''')
+                       upload_date TEXT NOT NULL,
+                       folder_id INTEGER NOT NULL,
+                       FOREIGN KEY(folder_id) REFERENCES tbl_folder(id))''')
 
         c.execute('''CREATE TABLE tbl_slave_node
                       (id INTEGER NOT NULL PRIMARY KEY,
@@ -306,6 +318,7 @@ class Master:
     def close(self):
         for node in self.nodes:
             node.status = "restart"
+            node.socket.sendall(util.s_to_bytes("CLOSE"))
             self.update_slave_node(node)
         self.execute = False
 

@@ -3,7 +3,7 @@
 database = "database.db"
 config_file = "config.dsa"
 bufsize = 1024
-restart_window = 3.0
+restart_window = 10.0
 wait_interval = .1
 command_port = 18981
 slave_connect_wait = 1.0
