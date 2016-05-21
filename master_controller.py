@@ -6,6 +6,7 @@ import os
 import util
 import time
 import select
+import datetime
 
 
 class SlaveNode:
@@ -15,6 +16,149 @@ class SlaveNode:
         self.id = -1
         self.storage_space = 0
         self.status = "inactive"
+
+    @staticmethod
+    def get_slave_nodes():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_slave_node WHERE status = 'restart'")
+
+        rows = c.fetchall()
+        nodes = []
+        for row in rows:
+            node = SlaveNode()
+            node.id = row[0]
+            node.storage_space = row[1]
+            node.status = row[2]
+            nodes.append(node)
+
+        conn.close()
+
+        return nodes
+
+    @staticmethod
+    def get_slave_node(id):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (id,)
+        c.execute('SELECT * FROM tbl_slave_node WHERE id = ?', params)
+
+        row = c.fetchone()
+        node = None
+        if row is not None:
+            node = SlaveNode()
+            node.id = row[0]
+            node.storage_space = row[1]
+            node.status = row[2]
+
+        conn.close()
+
+        return node
+
+    @staticmethod
+    def update_slave_node(node):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (node.status, node.storage_space, node.id)
+
+        c.execute('''UPDATE tbl_slave_node SET
+                     status = ?,
+                     storage_space = ?
+                     WHERE id = ?''', params)
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def insert_slave_node(node):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (node.status, node.storage_space)
+
+        c.execute('''INSERT INTO tbl_slave_node
+                     (status,
+                      storage_space)
+                     VALUES
+                     (?,
+                      ?)''', params)
+        node.id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def clear_db():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute('''
+                    DELETE FROM tbl_slave_node
+                    ''')
+
+        conn.commit()
+        conn.close()
+
+
+class File:
+    def __init__(self):
+        self.id = -1
+        self.name = ""
+        self.size = 0
+        self.upload_date = None
+        self.folder_id = 1
+
+    @staticmethod
+    def get_files():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file")
+
+        rows = c.fetchall()
+        files = []
+        for row in rows:
+            file = File()
+            file.id = row[0]
+            file.name = row[1]
+            file.size = row[2]
+            file.upload_date = util.datetime_from_s(row[3])
+            file.folder_id = row[4]
+            files.append(file)
+
+        conn.close()
+
+        return files
+
+    @staticmethod
+    def get_files(id):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (id,)
+        c.execute("SELECT * FROM tbl_file WHERE id = ?", params)
+
+        row = c.fetchone()
+        file = None
+        if row is not None:
+            file = File()
+            file.id = row[0]
+            file.name = row[1]
+            file.size = row[2]
+            file.upload_date = util.datetime_from_s(row[3])
+            file.folder_id = row[4]
+
+        conn.close()
+
+        return file
 
 
 class WelcomeSocket:
@@ -27,7 +171,7 @@ class WelcomeSocket:
         # create an INET, STREAMing socket
         self.welcome_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # bind the socket to a public host, and a well-known port
-        self.welcome_socket.bind((socket.gethostname(), self.port))
+        self.welcome_socket.bind(("0.0.0.0", self.port))
         # become a server socket
         self.welcome_socket.listen(5)
 
@@ -65,7 +209,7 @@ class Master:
             self.setup_db()
 
         else:
-            self.nodes = self.get_slave_nodes()
+            self.nodes = SlaveNode.get_slave_nodes()
 
         # set up the welcoming socket for new threads
         print("Create welcome thread")
@@ -90,7 +234,7 @@ class Master:
         new_nodes = [x for x in self.nodes if x.status == "new"]
         for node in new_nodes:
             node.status = "connected"
-            self.update_slave_node(node)
+            SlaveNode.update_slave_node(node)
 
         # set up command socket
         # create an INET, STREAMing socket
@@ -144,7 +288,7 @@ class Master:
         self.nodes_lock.release()
 
         # start recovery stuff here
-        self.update_slave_node(node)
+        SlaveNode.update_slave_node(node)
         return
 
     def accept_new_node(self, node):
@@ -167,14 +311,14 @@ class Master:
 
         # if id == -1 then it's a new node
         if node.id == -1:
-            self.insert_slave_node(node)
+            SlaveNode.insert_slave_node(node)
             print("New node connected")
         else:
             # check the case where connecting node doesn't give a valid id
-            existing_node = self.get_slave_node(node.id)
+            existing_node = SlaveNode.get_slave_node(node.id)
             if existing_node is None:
                 # treat it like a new node
-                self.insert_slave_node(node)
+                SlaveNode.insert_slave_node(node)
                 print("Invalid node connected")
             else:
                 print("Existing node connected")
@@ -184,7 +328,7 @@ class Master:
         # get the storage space of the new node
         node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
 
-        self.update_slave_node(node)
+        SlaveNode.update_slave_node(node)
         # add the node to the list of nodes
         # LOCK
         self.nodes_lock.acquire()
@@ -232,94 +376,11 @@ class Master:
         conn.commit()
         conn.close()
 
-    def get_slave_nodes(self):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        c.execute("SELECT * FROM tbl_slave_node WHERE status = 'restart'")
-
-        rows = c.fetchall()
-        nodes = []
-        for row in rows:
-            node = SlaveNode()
-            node.id = row[0]
-            node.storage_space = row[1]
-            node.status = row[2]
-            nodes.append(node)
-
-        conn.close()
-
-        return nodes
-
-    def get_slave_node(self, id):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (id,)
-        c.execute('SELECT * FROM tbl_slave_node WHERE id = ?', params)
-
-        row = c.fetchone()
-        node = None
-        if row is not None:
-            node = SlaveNode()
-            node.id = row[0]
-            node.storage_space = row[1]
-            node.status = row[2]
-
-        conn.close()
-
-        return node
-
-    def update_slave_node(self, node):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (node.status, node.storage_space, node.id)
-
-        c.execute('''UPDATE tbl_slave_node SET
-                     status = ?,
-                     storage_space = ?
-                     WHERE id = ?''', params)
-        conn.commit()
-        conn.close()
-
-    def insert_slave_node(self, node):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (node.status, node.storage_space)
-
-        c.execute('''INSERT INTO tbl_slave_node
-                     (status,
-                      storage_space)
-                     VALUES
-                     (?,
-                      ?)''', params)
-        node.id = c.lastrowid
-        conn.commit()
-        conn.close()
-
-    def clear_db(self):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        c.execute('''
-                    DELETE FROM tbl_slave_node
-                    ''')
-
-        conn.commit()
-        conn.close()
-
     def close(self):
         for node in self.nodes:
             node.status = "restart"
             node.socket.sendall(util.s_to_bytes("CLOSE"))
-            self.update_slave_node(node)
+            SlaveNode.update_slave_node(node)
         self.execute = False
 
     def start(self):
@@ -332,7 +393,7 @@ class Master:
             if command == "test":
                 print("test command received")
             elif command == "clear_database":
-                self.clear_db()
+                SlaveNode.clear_db()
                 print("database cleared")
             elif command == "show_nodes":
                 print(self.nodes)
@@ -340,6 +401,17 @@ class Master:
                 self.close()
                 print("Closing master controller")
                 return
+            elif command == "upload":
+                print("Upload command received")
+                client_socket.sendall(util.s_to_bytes("OK"))
+                file_path = util.s_from_bytes(client_socket.recv(util.bufsize))
+                try:
+                    file = open(file_path, mode='rb')
+                    f = file.read()
+                    bytes = bytearray(f)
+                    print("File length: ", str(len(bytes)))
+                except FileNotFoundError:
+                    print("File not found")
             else:
                 print("Unrecognized command")
 

@@ -32,6 +32,7 @@ class Slave:
                 self.socket = socket.create_connection((self.address, self.port))
                 break
             except socket.error:
+                print(socket.error.strerror)
                 time.sleep(util.slave_connect_wait)
 
         # initial connection protocol
@@ -73,7 +74,7 @@ class Slave:
                 self.socket.sendall(util.s_to_bytes("OPEN"))
             elif command == "CLOSE":
                 print("Close command received")
-                break;
+                break
             else:
                 print("unrecognized command")
 

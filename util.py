@@ -1,5 +1,7 @@
+import datetime
 
-# config settings
+
+# GLOBAL settings
 database = "database.db"
 config_file = "config.dsa"
 bufsize = 1024
@@ -8,7 +10,6 @@ wait_interval = .1
 command_port = 18981
 slave_connect_wait = 1.0
 master_continuous_wait = 1.0
-
 
 
 def i_from_bytes(val):
@@ -45,3 +46,21 @@ def s_to_bytes(val):
     :return:
     """
     return val.encode("ascii")
+
+
+def datetime_from_s(val):
+    """
+    Converts the given string into a datetime object and returns the result
+    :param val:
+    :return:
+    """
+    return datetime.datetime.strptime(date_string=val, format="%m %d %Y %H:%M:%S:%f %z")
+
+
+def datetime_to_s(val):
+    """
+    Converts the given datetime object into a string and returns the result
+    :param val:
+    :return:
+    """
+    return val.strftime(format="%m %d %Y %H:%M:%S:%f %z")
