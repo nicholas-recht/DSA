@@ -9,6 +9,7 @@ restart_window = 10.0
 wait_interval = .1
 command_port = 18981
 slave_connect_wait = 1.0
+slave_connect_timeout = 10.0
 master_continuous_wait = 1.0
 
 
@@ -54,7 +55,7 @@ def datetime_from_s(val):
     :param val:
     :return:
     """
-    return datetime.datetime.strptime(date_string=val, format="%m %d %Y %H:%M:%S:%f %z")
+    return datetime.datetime.strptime(val, "%m %d %Y %H:%M:%S.%f")
 
 
 def datetime_to_s(val):
@@ -63,4 +64,4 @@ def datetime_to_s(val):
     :param val:
     :return:
     """
-    return val.strftime(format="%m %d %Y %H:%M:%S:%f %z")
+    return val.strftime(format="%m %d %Y %H:%M:%S.%f")

@@ -29,11 +29,12 @@ class Slave:
         # continually try and create the connection until successful
         while True:
             try:
-                self.socket = socket.create_connection((self.address, self.port))
+                self.socket = socket.create_connection((self.address, self.port), util.slave_connect_timeout)
                 break
-            except socket.error:
-                print(socket.error.strerror)
+            except socket.error as e:
+                print(str(e))
                 time.sleep(util.slave_connect_wait)
+        print("Connection established")
 
         # initial connection protocol
         self.socket.sendall(util.i_to_bytes(self.id))

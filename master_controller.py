@@ -7,6 +7,7 @@ import util
 import time
 import select
 import datetime
+import math
 
 
 class SlaveNode:
@@ -114,6 +115,9 @@ class File:
         self.upload_date = None
         self.folder_id = 1
 
+    def to_string(self):
+        return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date)
+
     @staticmethod
     def get_files():
         # open the connection
@@ -138,7 +142,7 @@ class File:
         return files
 
     @staticmethod
-    def get_files(id):
+    def get_file(id):
         # open the connection
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
@@ -160,6 +164,165 @@ class File:
 
         return file
 
+    @staticmethod
+    def insert_file(file):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (file.name, file.size, util.datetime_to_s(file.upload_date), file.folder_id)
+
+        c.execute('''INSERT INTO tbl_file
+                         (  name,
+                            size,
+                            upload_date,
+                            folder_id)
+                         VALUES
+                         (  ?,
+                            ?,
+                            ?,
+                            ?)''', params)
+        file.id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update_file(file):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (file.name, file.size, util.datetime_to_s(file.upload_date), file.folder_id, file.id)
+
+        c.execute('''UPDATE tbl_file SET
+                        name = ?,
+                        size = ?,
+                        upload_date = ?,
+                        folder_id = ?
+                    WHERE id = ?''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def clear_db():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute('''DELETE FROM tbl_file
+                        ''')
+
+        conn.commit()
+        conn.close()
+
+
+class FilePart:
+    def __init__(self):
+        self.id = -1
+        self.file_id = -1
+        self.node_id = -1
+        self.access_name = ""
+        self.sequence_order = -1
+
+    @staticmethod
+    def get_file_parts():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file_part")
+
+        rows = c.fetchall()
+        file_parts = []
+        for row in rows:
+            part = FilePart()
+            part.id = row[0]
+            part.file_id = row[1]
+            part.node_id = row[2]
+            part.access_name = row[3]
+            part.sequence_order = row[4]
+            file_parts.append(part)
+
+        conn.close()
+
+        return file_parts
+
+    @staticmethod
+    def get_file_part(id):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (id,)
+        c.execute("SELECT * FROM tbl_file_part WHERE id = ?", params)
+
+        row = c.fetchone()
+        part = None
+        if row is not None:
+            part = FilePart()
+            part.id = row[0]
+            part.file_id = row[1]
+            part.node_id = row[2]
+            part.access_name = row[3]
+            part.sequence_order = row[4]
+
+        conn.close()
+
+        return part
+
+    @staticmethod
+    def insert_file_part(part):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order)
+
+        c.execute('''INSERT INTO tbl_file_part
+                             (  file_id,
+                                node_id,
+                                access_name,
+                                sequence_order)
+                             VALUES
+                             (  ?,
+                                ?,
+                                ?,
+                                ?)''', params)
+        part.id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update_file_part(part):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.id)
+
+        c.execute('''UPDATE tbl_file_part SET
+                            file_id = ?,
+                            node_id = ?,
+                            access_name = ?,
+                            sequence_order = ?
+                     WHERE id = ?''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def clear_db():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute('''DELETE FROM tbl_file_part
+                            ''')
+
+        conn.commit()
+        conn.close()
+
 
 class WelcomeSocket:
     def __init__(self, new_client_callback=None, port=15719):
@@ -171,7 +334,7 @@ class WelcomeSocket:
         # create an INET, STREAMing socket
         self.welcome_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # bind the socket to a public host, and a well-known port
-        self.welcome_socket.bind(("0.0.0.0", self.port))
+        self.welcome_socket.bind(("", self.port))
         # become a server socket
         self.welcome_socket.listen(5)
 
@@ -383,6 +546,41 @@ class Master:
             SlaveNode.update_slave_node(node)
         self.execute = False
 
+    def upload_file(self, file):
+        f = file.read()
+        bytes = bytearray(f)
+
+        # create the new file object
+        file_obj = File()
+        file_obj.folder_id = 1
+        file_obj.upload_date = datetime.datetime.utcnow()
+        name = file.name.replace("\\", "/")
+        file_obj.name = name.split("/")[-1]
+        file_obj.size = len(bytes)
+
+        File.insert_file(file_obj)
+        file.close()
+
+        # split the file into parts
+        num_splits = len(self.nodes)
+        if num_splits > 0:
+            split_size = math.ceil(file_obj.size / num_splits)
+            index = 0
+            array_index = 0
+            while index < num_splits:
+                part_bytes = bytes[array_index:array_index + split_size]
+                part = FilePart()
+                part.node_id = self.nodes[index].id
+                part.file_id = file_obj.id
+                part.sequence_order = index
+                part.access_name = str(file_obj.id) + "_" + str(index)
+
+                index += 1
+                array_index += split_size
+        else:
+            print("Error: no connected nodes")
+
+
     def start(self):
         # main process loop - listen for commands
         while True:
@@ -394,9 +592,15 @@ class Master:
                 print("test command received")
             elif command == "clear_database":
                 SlaveNode.clear_db()
+                File.clear_db()
+                FilePart.clear_db()
                 print("database cleared")
             elif command == "show_nodes":
                 print(self.nodes)
+            elif command == "show_files":
+                files = File.get_files()
+                for file in files:
+                    print(file.to_string())
             elif command == "close":
                 self.close()
                 print("Closing master controller")
@@ -407,9 +611,8 @@ class Master:
                 file_path = util.s_from_bytes(client_socket.recv(util.bufsize))
                 try:
                     file = open(file_path, mode='rb')
-                    f = file.read()
-                    bytes = bytearray(f)
-                    print("File length: ", str(len(bytes)))
+                    self.upload_file(file)
+                    print("File uploaded")
                 except FileNotFoundError:
                     print("File not found")
             else:
