@@ -67,6 +67,27 @@ class Slave:
 
         file.close()
 
+    def upload_file(self):
+        file_name = util.s_from_bytes(self.socket.recv(util.bufsize))
+        self.socket.sendall(util.s_to_bytes("OK"))
+        file_size = util.i_from_bytes(self.socket.recv(util.bufsize))
+        self.socket.sendall(util.s_to_bytes("OK"))
+
+        # get the file in "chunks" of bufsize
+        bytes = bytearray()
+        num_got = 0
+        while num_got < file_size:
+            chunk = self.socket.recv(util.bufsize)
+            bytes += chunk
+            num_got += len(chunk)
+
+        self.socket.sendall(util.s_to_bytes("OK"))
+
+        # write the file
+        file = open(self.storage_loc + '/' + file_name, mode='wb')
+        file.write(bytes)
+        file.close()
+
     def start(self):
         while True:
             command = util.s_from_bytes(self.socket.recv(util.bufsize))
@@ -76,7 +97,11 @@ class Slave:
             elif command == "CLOSE":
                 print("Close command received")
                 break
+            elif command == "UPLOAD":
+                self.socket.sendall(util.s_to_bytes("OK"))
+                self.upload_file()
             else:
+                self.socket.sendall(util.s_to_bytes("UNKNOWN"))
                 print("unrecognized command")
 
         # close the open socket

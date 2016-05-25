@@ -11,7 +11,7 @@ command_port = 18981
 slave_connect_wait = 1.0
 slave_connect_timeout = 10.0
 master_continuous_wait = 1.0
-
+slave_response_timeout = 1.0
 
 def i_from_bytes(val):
     """

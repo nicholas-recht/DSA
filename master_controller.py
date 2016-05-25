@@ -362,6 +362,7 @@ class Master:
         self.ready = False
         self.command_socket = None
         self.execute = True
+        self.busy = False
 
         # locks
         self.nodes_lock = threading.Lock()
@@ -418,21 +419,22 @@ class Master:
 
     def continuous_connection(self):
         while self.execute:
-            print("Nodes connected: ", str(len(self.nodes)))
-            threads = []
-            for node in self.nodes:
-                t = threading.Thread(target=self.check_connection, args=(node,))
-                threads.append(t)
-                t.start()
-            for t in threads:
-                t.join()
+            if not self.busy:
+                print("Nodes connected: ", str(len(self.nodes)))
+                threads = []
+                for node in self.nodes:
+                    t = threading.Thread(target=self.check_connection, args=(node,))
+                    threads.append(t)
+                    t.start()
+                for t in threads:
+                    t.join()
             time.sleep(util.master_continuous_wait)
 
     def check_connection(self, node):
         try:
             # send connect command
             node.socket.sendall(util.s_to_bytes("OPEN"))
-            ready = select.select([node.socket], [], [], .8)
+            ready = select.select([node.socket], [], [], util.master_continuous_wait - .2)
             if ready[0]:
                 response = util.s_from_bytes(node.socket.recv(util.bufsize))
             else:
@@ -558,8 +560,9 @@ class Master:
         file_obj.name = name.split("/")[-1]
         file_obj.size = len(bytes)
 
-        File.insert_file(file_obj)
         file.close()
+
+        File.insert_file(file_obj)
 
         # split the file into parts
         num_splits = len(self.nodes)
@@ -567,19 +570,97 @@ class Master:
             split_size = math.ceil(file_obj.size / num_splits)
             index = 0
             array_index = 0
+            parts = [None] * num_splits
+            part_bytes = [None] * num_splits
             while index < num_splits:
-                part_bytes = bytes[array_index:array_index + split_size]
+                part_bytes[index] = bytes[array_index:array_index + split_size]
+
                 part = FilePart()
                 part.node_id = self.nodes[index].id
                 part.file_id = file_obj.id
                 part.sequence_order = index
                 part.access_name = str(file_obj.id) + "_" + str(index)
 
+                parts[index] = part
+
                 index += 1
                 array_index += split_size
+
+            # send each part to the slave nodes
+            self.busy = True
+            msgs = [None] * num_splits
+            threads = [None] * num_splits
+            index = 0
+            while index < num_splits:
+                t = threading.Thread(target=self.upload_part,
+                                     args=(self.nodes[index],
+                                           parts[index].access_name,
+                                           part_bytes[index],
+                                           msgs,
+                                           index))
+                threads[index] = t
+                t.start()
+                index += 1
+            for t in threads:
+                t.join()
+
+            self.busy = False
+            # check for any errors
+            errors = [x for x in msgs if x is not None]
+            if len(errors) > 0:
+                print("Error sending file")
+                for error in errors:
+                    print(error)
+                # TODO delete any parts that were successfully sent
+                # TODO delete the file obj from the database
+            else:
+                for part in parts:
+                    FilePart.insert_file_part(part)
+
         else:
             print("Error: no connected nodes")
 
+    def upload_part(self, node, name, bytes, errors, index):
+        try:
+            # send command
+            node.socket.sendall(util.s_to_bytes("UPLOAD"))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+            # send the name
+            node.socket.sendall(util.s_to_bytes(name))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+            # send the size of the file part
+            node.socket.sendall(util.i_to_bytes(len(bytes)))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+            # send the file part
+            node.socket.sendall(bytes)
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+
+        except socket.error as e:
+            errors[index] = str(e)
 
     def start(self):
         # main process loop - listen for commands
