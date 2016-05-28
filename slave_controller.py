@@ -88,6 +88,32 @@ class Slave:
         file.write(bytes)
         file.close()
 
+        print("File uploaded")
+
+    def download_file(self):
+        file_name = util.s_from_bytes(self.socket.recv(util.bufsize))
+
+        try:
+            file = open(self.storage_loc + '/' + file_name, mode='rb')
+            f = file.read()
+            bytes = bytearray(f)
+
+            self.socket.sendall(util.i_to_bytes(len(bytes)))
+
+            response = util.s_from_bytes(self.socket.recv(util.bufsize))
+            if response != "SEND":
+                raise Exception("Unrecognized command")
+
+            self.socket.sendall(bytes)
+
+            file.close()
+
+            print("File downloaded")
+
+        except FileNotFoundError as e:
+            self.socket.sendall(util.s_to_bytes("FAIL"))
+            print(str(e))
+
     def start(self):
         while True:
             command = util.s_from_bytes(self.socket.recv(util.bufsize))
@@ -100,6 +126,9 @@ class Slave:
             elif command == "UPLOAD":
                 self.socket.sendall(util.s_to_bytes("OK"))
                 self.upload_file()
+            elif command == "DOWNLOAD":
+                self.socket.sendall(util.s_to_bytes("OK"))
+                self.download_file()
             else:
                 self.socket.sendall(util.s_to_bytes("UNKNOWN"))
                 print("unrecognized command")
@@ -109,13 +138,18 @@ class Slave:
 
 
 def main(args):
-    # set up the master controller
-    if len(args) > 1:
-        slave = Slave(args[1], int(args[2]), int(args[3]), args[4])
-    else:
-        slave = Slave()
+    try:
+        # set up the master controller
+        if len(args) > 1:
+            slave = Slave(args[1], int(args[2]), int(args[3]), args[4])
+        else:
+            slave = Slave()
 
-    slave.start()
+        slave.start()
+    except Exception as e:
+        print(str(e))
+        # start over again if there is a failure
+        main([])
 
     return
 

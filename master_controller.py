@@ -662,6 +662,112 @@ class Master:
         except socket.error as e:
             errors[index] = str(e)
 
+    def download_file(self, id):
+        try:
+            file_obj = File.get_file(id)
+            if file_obj is None:
+                raise Exception("The requested file does not exist")
+
+            # get all the file parts
+            file_parts = [x for x in FilePart.get_file_parts() if x.file_id == file_obj.id]
+            num_parts = max(file_parts,
+                            key=lambda var: var.sequence_order)\
+                .sequence_order + 1  # the number of "unique" file parts
+
+            node_dict = {}  # key: node_id  value: node
+            for node in self.nodes:
+                node_dict[node.id] = node
+
+            part_found = [False] * num_parts  # has the part with the given sequence_order been found?
+            part_dict = {}  # key: part_sequence_order  value: part
+            part_on_node_dict = {}  # key: part_sequence_order  value: node that stores it
+            for part in file_parts:
+                if part.node_id in node_dict:
+                    part_found[part.sequence_order] = True
+                    if part.sequence_order not in part_on_node_dict:
+                        part_on_node_dict[part.sequence_order] = node_dict[part.node_id]
+                        part_dict[part.sequence_order] = part
+
+            # check if all file parts are accounted for
+            if len([x for x in part_found if x is False]) > 0:
+                raise Exception("Not all file parts are available from the set of nodes currently connected")
+
+            # get the part from each node
+            self.busy = True
+            rtnVal = [None] * num_parts
+            threads = [None] * num_parts
+            index = 0
+            while index < num_parts:
+                t = threading.Thread(target=self.download_part,
+                                     args=(part_on_node_dict[index],
+                                           part_dict[index].access_name,
+                                           rtnVal,
+                                           index))
+                threads[index] = t
+                t.start()
+                index += 1
+            for t in threads:
+                t.join()
+
+            self.busy = False
+            # check for any errors
+            part_contents = [x for x in rtnVal if isinstance(x, bytearray)]
+            if len(part_contents) < num_parts:
+                print("Error receiving file")
+                errors = [x for x in rtnVal if isinstance(x, str)]
+                for error in errors:
+                    print(error)
+                    # TODO handle error better
+            else:
+                file_contents = bytearray()
+                for part_content in part_contents:
+                    file_contents += part_content
+
+                # write the file
+                file = open(file_obj.name, mode='wb')
+                file.write(file_contents)
+                file.close()
+
+        except Exception as e:
+            print(str(e))
+
+    def download_part(self, node, name, rtnVal, index):
+        try:
+            # send command
+            node.socket.sendall(util.s_to_bytes("DOWNLOAD"))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("download time out")
+            # send the name
+            node.socket.sendall(util.s_to_bytes(name))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.i_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response == "FAIL":
+                raise socket.error("upload time out")
+            file_size = response
+            # send the size of the file part
+            node.socket.sendall(util.s_to_bytes("SEND"))
+
+            # get the file in "chunks" of bufsize
+            bytes = bytearray()
+            num_got = 0
+            while num_got < file_size:
+                chunk = node.socket.recv(util.bufsize)
+                bytes += chunk
+                num_got += len(chunk)
+
+            rtnVal[index] = bytes
+
+        except socket.error as e:
+            rtnVal[index] = str(e)
+
     def start(self):
         # main process loop - listen for commands
         while True:
@@ -696,6 +802,15 @@ class Master:
                     print("File uploaded")
                 except FileNotFoundError:
                     print("File not found")
+            elif command == "download":
+                print("Download command received")
+                client_socket.sendall(util.s_to_bytes("OK"))
+                file_id = int(util.s_from_bytes(client_socket.recv(util.bufsize)))
+                try:
+                    self.download_file(file_id)
+                    print("File downloaded")
+                except Exception as e:
+                    print(str(e))
             else:
                 print("Unrecognized command")
 
