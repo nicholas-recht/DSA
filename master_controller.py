@@ -835,5 +835,7 @@ def main(args):
     return
 
 
+instance = None
+
 if __name__ == "__main__":
     main(sys.argv)
