@@ -363,6 +363,7 @@ class Master:
         self.command_socket = None
         self.execute = True
         self.busy = False
+        self.command_thread = None
 
         # locks
         self.nodes_lock = threading.Lock()
@@ -768,7 +769,12 @@ class Master:
         except socket.error as e:
             rtnVal[index] = str(e)
 
-    def start(self):
+    def listen_for_commands(self):
+        if self.command_thread is None:
+            self.command_thread = threading.Thread(target=self.command_loop, daemon=True)
+            self.command_thread.start()
+
+    def command_loop(self):
         # main process loop - listen for commands
         while True:
             # accept connections from outside
@@ -822,7 +828,10 @@ class Master:
 def main(args):
     # set up the master controller
     master = Master()
-    master.start()
+    master.listen_for_commands()
+
+    while True:
+        time.sleep(60)
     return
 
 
