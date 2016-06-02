@@ -3,7 +3,7 @@ import socket
 import threading
 import sqlite3
 import os
-import util
+from . import util
 import time
 import select
 import datetime

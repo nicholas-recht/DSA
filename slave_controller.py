@@ -1,6 +1,6 @@
 import os
 import sys
-import util
+from . import util
 import socket
 import time
 

@@ -1,6 +1,6 @@
 import sys
 import socket
-import util
+from . import util
 
 
 def main(args):
