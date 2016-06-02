@@ -1,6 +1,9 @@
 import sys
 import socket
-from . import util
+if __name__ == "__main__":
+    import util
+else:
+    from . import util
 
 
 def main(args):

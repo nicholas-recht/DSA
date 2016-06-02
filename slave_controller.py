@@ -1,8 +1,11 @@
 import os
 import sys
-from . import util
 import socket
 import time
+if __name__ == "__main__":
+    import util
+else:
+    from . import util
 
 
 class Slave:

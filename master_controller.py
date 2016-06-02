@@ -3,11 +3,14 @@ import socket
 import threading
 import sqlite3
 import os
-from . import util
 import time
 import select
 import datetime
 import math
+if __name__ == "__main__":
+    import util
+else:
+    from . import util
 
 
 class SlaveNode:
