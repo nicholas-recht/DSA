@@ -727,13 +727,12 @@ class Master:
                 for part_content in part_contents:
                     file_contents += part_content
 
-                # write the file
-                file = open(file_obj.name, mode='wb')
-                file.write(file_contents)
-                file.close()
+                return file_contents
 
         except Exception as e:
             print(str(e))
+
+            return None
 
     def download_part(self, node, name, rtnVal, index):
         try:
