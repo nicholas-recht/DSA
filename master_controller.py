@@ -552,19 +552,13 @@ class Master:
             SlaveNode.update_slave_node(node)
         self.execute = False
 
-    def upload_file(self, file):
-        f = file.read()
-        bytes = bytearray(f)
-
+    def upload_file(self, name, bytes):
         # create the new file object
         file_obj = File()
         file_obj.folder_id = 1
         file_obj.upload_date = datetime.datetime.utcnow()
-        name = file.name.replace("\\", "/")
-        file_obj.name = name.split("/")[-1]
+        file_obj.name = name
         file_obj.size = len(bytes)
-
-        file.close()
 
         File.insert_file(file_obj)
 
@@ -806,7 +800,13 @@ class Master:
                 file_path = util.s_from_bytes(client_socket.recv(util.bufsize))
                 try:
                     file = open(file_path, mode='rb')
-                    self.upload_file(file)
+                    name = file.name.replace("\\", "/")
+                    name = name.split("/")[-1]
+                    f = file.read()
+                    bytes = bytearray(f)
+                    file.close()
+                    self.upload_file(name, bytes)
+
                     print("File uploaded")
                 except FileNotFoundError:
                     print("File not found")
