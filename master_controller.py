@@ -553,6 +553,7 @@ class Master:
         self.execute = False
 
     def upload_file(self, name, bytes):
+        return_id = -1
         # create the new file object
         file_obj = File()
         file_obj.folder_id = 1
@@ -615,8 +616,13 @@ class Master:
                 for part in parts:
                     FilePart.insert_file_part(part)
 
+                # return the file_obj if everything was successfully completed
+                return file_obj
+
         else:
             print("Error: no connected nodes")
+
+        return None
 
     def upload_part(self, node, name, bytes, errors, index):
         try:
