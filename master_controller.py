@@ -208,6 +208,20 @@ class File:
         conn.close()
 
     @staticmethod
+    def delete_file(file):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (file.id,)
+
+        c.execute('''DELETE FROM tbl_file WHERE id = ?
+                            ''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
     def clear_db():
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -252,6 +266,29 @@ class FilePart:
         return file_parts
 
     @staticmethod
+    def get_lost_file_parts():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file_part_lost")
+
+        rows = c.fetchall()
+        file_parts = []
+        for row in rows:
+            part = FilePart()
+            part.id = row[0]
+            part.file_id = row[1]
+            part.node_id = row[2]
+            part.access_name = row[3]
+            part.sequence_order = row[4]
+            file_parts.append(part)
+
+        conn.close()
+
+        return file_parts
+
+    @staticmethod
     def get_file_part(id):
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -259,6 +296,29 @@ class FilePart:
 
         params = (id,)
         c.execute("SELECT * FROM tbl_file_part WHERE id = ?", params)
+
+        row = c.fetchone()
+        part = None
+        if row is not None:
+            part = FilePart()
+            part.id = row[0]
+            part.file_id = row[1]
+            part.node_id = row[2]
+            part.access_name = row[3]
+            part.sequence_order = row[4]
+
+        conn.close()
+
+        return part
+
+    @staticmethod
+    def get_lost_file_part(id):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (id,)
+        c.execute("SELECT * FROM tbl_file_part_lost WHERE id = ?", params)
 
         row = c.fetchone()
         part = None
@@ -297,6 +357,30 @@ class FilePart:
         conn.close()
 
     @staticmethod
+    def insert_lost_file_part(part):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (part.id, part.file_id, part.node_id, part.access_name, part.sequence_order)
+
+        c.execute('''INSERT INTO tbl_file_part_lost
+                                 (  id,
+                                    file_id,
+                                    node_id,
+                                    access_name,
+                                    sequence_order)
+                                 VALUES
+                                 (  ?,
+                                    ?,
+                                    ?,
+                                    ?,
+                                    ?)''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
     def update_file_part(part):
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -315,6 +399,34 @@ class FilePart:
         conn.close()
 
     @staticmethod
+    def delete_file_part(part):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (part.id,)
+
+        c.execute('''DELETE FROM tbl_file_part WHERE id = ?
+                                ''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def delete_lost_file_part(part):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (part.id,)
+
+        c.execute('''DELETE FROM tbl_file_part_lost WHERE id = ?
+                                    ''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
     def clear_db():
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -322,6 +434,9 @@ class FilePart:
 
         c.execute('''DELETE FROM tbl_file_part
                             ''')
+
+        c.execute('''DELETE FROM tbl_file_part_lost
+            ''')
 
         conn.commit()
         conn.close()
@@ -538,6 +653,14 @@ class Master:
                        sequence_order INTEGER,
                        FOREIGN KEY(file_id) REFERENCES tbl_file(id) ON UPDATE CASCADE,
                        FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
+
+        c.execute(('''CREATE TABLE tbl_file_part_lost
+            (id INTEGER NOT NULL PRIMARY KEY,
+             file_id INTEGER NOT NULL,
+             node_id INTEGER NOT NULL,
+             access_name TEXT NOT NULL,
+             sequence_order INTEGER,
+             FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
 
         c.execute('''CREATE UNIQUE INDEX ux_tbl_file_part ON tbl_file_part(file_id, sequence_order)''')
 
@@ -771,6 +894,86 @@ class Master:
         except socket.error as e:
             rtnVal[index] = str(e)
 
+    def delete_file(self, id):
+        try:
+            file_obj = File.get_file(id)
+            if file_obj is None:
+                raise Exception("The requested file does not exist")
+
+            # get all the file parts
+            file_parts = [x for x in FilePart.get_file_parts() if x.file_id == file_obj.id]
+            num_parts = len(file_parts)
+
+            node_dict = {}  # key: node_id  value: node
+            for node in self.nodes:
+                node_dict[node.id] = node
+
+            # delete each file part where the node is connected
+            self.busy = True
+            rtnVal = []
+            threads = []
+            parts = []
+            index = 0
+            for part in file_parts:
+                if part.node_id in node_dict:
+                    rtnVal.append(None)
+                    parts.append(part)
+                    t = threading.Thread(target=self.delete_part,
+                                         args=(node_dict[part.node_id],
+                                               part.access_name,
+                                               rtnVal,
+                                               index))
+                    threads.append(t)
+                    t.start()
+                else:
+                    FilePart.delete_file_part(part)
+                    FilePart.insert_lost_file_part(part)
+                index += 1
+
+            for t in threads:
+                t.join()
+            self.busy = False
+
+            # check for any errors
+            for idx, val in enumerate(rtnVal):
+                part = parts[idx]
+                FilePart.delete_file_part(part)
+
+                if isinstance(val, str):
+                    print(val)
+                    FilePart.insert_lost_file_part(part)
+
+            File.delete_file(file_obj)
+
+        except Exception as e:
+            print(str(e))
+
+            return None
+
+    def delete_part(self, node, name, errors, index):
+        try:
+            # send command
+            node.socket.sendall(util.s_to_bytes("DELETE"))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+            # send the name
+            node.socket.sendall(util.s_to_bytes(name))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+
+        except socket.error as e:
+            errors[index] = str(e)
+
     def listen_for_commands(self):
         if self.command_thread is None:
             self.command_thread = threading.Thread(target=self.command_loop, daemon=True)
@@ -779,32 +982,33 @@ class Master:
     def command_loop(self):
         # main process loop - listen for commands
         while True:
-            # accept connections from outside
-            (client_socket, address) = self.command_socket.accept()
-            command = util.s_from_bytes(client_socket.recv(util.bufsize))
+            try:
+                # accept connections from outside
+                (client_socket, address) = self.command_socket.accept()
+                command = util.s_from_bytes(client_socket.recv(util.bufsize))
 
-            if command == "test":
-                print("test command received")
-            elif command == "clear_database":
-                SlaveNode.clear_db()
-                File.clear_db()
-                FilePart.clear_db()
-                print("database cleared")
-            elif command == "show_nodes":
-                print(self.nodes)
-            elif command == "show_files":
-                files = File.get_files()
-                for file in files:
-                    print(file.to_string())
-            elif command == "close":
-                self.close()
-                print("Closing master controller")
-                return
-            elif command == "upload":
-                print("Upload command received")
-                client_socket.sendall(util.s_to_bytes("OK"))
-                file_path = util.s_from_bytes(client_socket.recv(util.bufsize))
-                try:
+                if command == "test":
+                    print("test command received")
+                elif command == "clear_database":
+                    SlaveNode.clear_db()
+                    File.clear_db()
+                    FilePart.clear_db()
+                    print("database cleared")
+                elif command == "show_nodes":
+                    print(self.nodes)
+                elif command == "show_files":
+                    files = File.get_files()
+                    for file in files:
+                        print(file.to_string())
+                elif command == "close":
+                    self.close()
+                    print("Closing master controller")
+                    return
+                elif command == "upload":
+                    print("Upload command received")
+                    client_socket.sendall(util.s_to_bytes("OK"))
+                    file_path = util.s_from_bytes(client_socket.recv(util.bufsize))
+
                     file = open(file_path, mode='rb')
                     name = file.name.replace("\\", "/")
                     name = name.split("/")[-1]
@@ -812,23 +1016,31 @@ class Master:
                     bytes = bytearray(f)
                     file.close()
                     self.upload_file(name, bytes)
-
                     print("File uploaded")
-                except FileNotFoundError:
-                    print("File not found")
-            elif command == "download":
-                print("Download command received")
-                client_socket.sendall(util.s_to_bytes("OK"))
-                file_id = int(util.s_from_bytes(client_socket.recv(util.bufsize)))
-                try:
+
+                elif command == "download":
+                    print("Download command received")
+                    client_socket.sendall(util.s_to_bytes("OK"))
+                    file_id = int(util.s_from_bytes(client_socket.recv(util.bufsize)))
+
                     self.download_file(file_id)
                     print("File downloaded")
-                except Exception as e:
-                    print(str(e))
-            else:
-                print("Unrecognized command")
 
-            client_socket.close()
+                elif command == "delete":
+                    print("Delete command received")
+                    client_socket.sendall(util.s_to_bytes("OK"))
+                    file_id = int(util.s_from_bytes(client_socket.recv(util.bufsize)))
+
+                    self.delete_file(file_id)
+                    print("File deleted")
+
+                else:
+                    print("Unrecognized command")
+
+                client_socket.close()
+
+            except Exception as e:
+                print(str(e))
 
         self.command_socket.close()
 

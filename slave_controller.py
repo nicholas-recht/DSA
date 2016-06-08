@@ -93,6 +93,15 @@ class Slave:
 
         print("File uploaded")
 
+    def delete_file(self):
+        file_name = util.s_from_bytes(self.socket.recv(util.bufsize))
+
+        os.remove(self.storage_loc + '/' + file_name)
+
+        self.socket.sendall(util.s_to_bytes("OK"))
+
+        print("File deleted")
+
     def download_file(self):
         file_name = util.s_from_bytes(self.socket.recv(util.bufsize))
 
@@ -132,6 +141,9 @@ class Slave:
             elif command == "DOWNLOAD":
                 self.socket.sendall(util.s_to_bytes("OK"))
                 self.download_file()
+            elif command == "DELETE":
+                self.socket.sendall(util.s_to_bytes("OK"))
+                self.delete_file()
             else:
                 self.socket.sendall(util.s_to_bytes("UNKNOWN"))
                 print("unrecognized command")
