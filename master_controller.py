@@ -241,6 +241,7 @@ class FilePart:
         self.node_id = -1
         self.access_name = ""
         self.sequence_order = -1
+        self.size = 0
 
     @staticmethod
     def get_file_parts():
@@ -259,6 +260,7 @@ class FilePart:
             part.node_id = row[2]
             part.access_name = row[3]
             part.sequence_order = row[4]
+            part.size = row[5]
             file_parts.append(part)
 
         conn.close()
@@ -282,6 +284,7 @@ class FilePart:
             part.node_id = row[2]
             part.access_name = row[3]
             part.sequence_order = row[4]
+            part.size = row[5]
             file_parts.append(part)
 
         conn.close()
@@ -306,6 +309,7 @@ class FilePart:
             part.node_id = row[2]
             part.access_name = row[3]
             part.sequence_order = row[4]
+            part.size = row[5]
 
         conn.close()
 
@@ -329,6 +333,7 @@ class FilePart:
             part.node_id = row[2]
             part.access_name = row[3]
             part.sequence_order = row[4]
+            part.size = row[5]
 
         conn.close()
 
@@ -340,15 +345,17 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (part.file_id, part.node_id, part.access_name, part.sequence_order)
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size)
 
         c.execute('''INSERT INTO tbl_file_part
                              (  file_id,
                                 node_id,
                                 access_name,
-                                sequence_order)
+                                sequence_order,
+                                size)
                              VALUES
                              (  ?,
+                                ?,
                                 ?,
                                 ?,
                                 ?)''', params)
@@ -362,16 +369,18 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (part.id, part.file_id, part.node_id, part.access_name, part.sequence_order)
+        params = (part.id, part.file_id, part.node_id, part.access_name, part.sequence_order, part.size)
 
         c.execute('''INSERT INTO tbl_file_part_lost
                                  (  id,
                                     file_id,
                                     node_id,
                                     access_name,
-                                    sequence_order)
+                                    sequence_order,
+                                    size)
                                  VALUES
                                  (  ?,
+                                    ?,
                                     ?,
                                     ?,
                                     ?,
@@ -386,13 +395,14 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.id)
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size, part.id)
 
         c.execute('''UPDATE tbl_file_part SET
                             file_id = ?,
                             node_id = ?,
                             access_name = ?,
-                            sequence_order = ?
+                            sequence_order = ?,
+                            size = ?
                      WHERE id = ?''', params)
 
         conn.commit()
@@ -650,7 +660,8 @@ class Master:
                        file_id INTEGER NOT NULL,
                        node_id INTEGER NOT NULL,
                        access_name TEXT NOT NULL,
-                       sequence_order INTEGER,
+                       sequence_order INTEGER NOT NULL,
+                       size INTEGER NOT NULL,
                        FOREIGN KEY(file_id) REFERENCES tbl_file(id) ON UPDATE CASCADE,
                        FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
 
@@ -659,7 +670,8 @@ class Master:
              file_id INTEGER NOT NULL,
              node_id INTEGER NOT NULL,
              access_name TEXT NOT NULL,
-             sequence_order INTEGER,
+             sequence_order INTEGER NOT NULL,
+             size INTEGER NOT NULL,
              FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
 
         c.execute('''CREATE UNIQUE INDEX ux_tbl_file_part ON tbl_file_part(file_id, sequence_order)''')
@@ -676,7 +688,12 @@ class Master:
         self.execute = False
 
     def upload_file(self, name, bytes):
-        return_id = -1
+        # check if there is enough space
+        if len(bytes) > self.get_total_space_available():
+            raise Exception("Not enough space available")
+
+        # TODO check each node individually and make sure it has enough space
+
         # create the new file object
         file_obj = File()
         file_obj.folder_id = 1
@@ -702,6 +719,7 @@ class Master:
                 part.file_id = file_obj.id
                 part.sequence_order = index
                 part.access_name = str(file_obj.id) + "_" + str(index)
+                part.size = len(part_bytes[index])
 
                 parts[index] = part
 
@@ -996,6 +1014,10 @@ class Master:
                     print("database cleared")
                 elif command == "show_nodes":
                     print(self.nodes)
+                elif command == "space_available":
+                    print(str(self.get_total_space_available()))
+                elif command == "total_space":
+                    print(str(self.get_total_size()))
                 elif command == "show_files":
                     files = File.get_files()
                     for file in files:
@@ -1043,6 +1065,17 @@ class Master:
                 print(str(e))
 
         self.command_socket.close()
+
+    def get_total_size(self):
+        return sum([x.storage_space for x in self.nodes])
+
+    def get_node_space_available(self, node):
+        file_part_sizes = [part.size for part in FilePart.get_file_parts() if part.node_id == node.id] + \
+                          [part.size for part in FilePart.get_lost_file_parts() if part.node_id == node.id]
+        return node.storage_space - sum(file_part_sizes)
+
+    def get_total_space_available(self):
+        return sum([self.get_node_space_available(x) for x in self.nodes])
 
 
 def main(args):

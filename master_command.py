@@ -7,11 +7,6 @@ else:
 
 
 def main(args):
-    if len(args) < 2:
-        print("usage: master_command <command>")
-        print("available commands: \n\ttest\n\tclear_database\n\tshow_nodes")
-        sys.exit()
-
     if len(args) == 2:
         command = args[1]
 
@@ -27,6 +22,10 @@ def main(args):
         s.sendall(util.s_to_bytes(param))
         s.close()
 
+    else:
+        print("usage: master_command <command>")
+        print("available commands: \n\ttest\n\tclear_database\n\tshow_nodes")
+        sys.exit()
 
 if __name__ == "__main__":
     main(sys.argv)
