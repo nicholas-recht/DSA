@@ -234,6 +234,184 @@ class File:
         conn.close()
 
 
+class Folder:
+    def __init__(self):
+        self.id = -1
+        self.parent_id = -1
+        self.name = ''
+        self.children = {}
+
+    @staticmethod
+    def get_folders():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_folder")
+
+        rows = c.fetchall()
+        folders = []
+        for row in rows:
+            folder = Folder()
+            folder.id = row[0]
+            folder.parent_id = row[1]
+            folder.name = row[2]
+
+            folders.append(folder)
+
+        conn.close()
+
+        return folders
+
+    @staticmethod
+    def get_folder(id):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (id,)
+        c.execute("SELECT * FROM tbl_folder WHERE id = ?", params)
+
+        row = c.fetchone()
+        folder = None
+        if row is not None:
+            folder = Folder()
+            folder.id = row[0]
+            folder.parent_id = row[1]
+            folder.name = row[2]
+
+        conn.close()
+
+        return folder
+
+    @staticmethod
+    def insert_folder(folder):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (folder.parent_id, folder.name)
+
+        c.execute('''INSERT INTO tbl_folder
+                             (  parent_id,
+                                name)
+                             VALUES
+                             (  ?,
+                                ?)''', params)
+
+        folder.id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update_folder_name(folder):
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (folder.name, folder.id)
+
+        c.execute('''UPDATE tbl_folder SET
+                            name = ?
+                     WHERE id = ?''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def update_folder_parent(folder, parent):
+        # make sure the given parent isn't actually a child of the folder
+        if Folder.is_parent(parent, folder):
+            raise Exception("Cannot move a folder to its own subdirectory")
+
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (parent.id, folder.id)
+
+        c.execute('''UPDATE tbl_folder SET
+                            parent_id = ?
+                     WHERE id = ?''', params)
+
+        conn.commit()
+        conn.close()
+
+        folder.parent_id = parent.id
+
+    @staticmethod
+    def delete_folder(folder):
+        files = [file for file in File.get_files() if file.folder_id == folder.id]
+        if len(files) > 0:
+            raise Exception("The folder is not empty.")
+
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (folder.id,)
+
+        c.execute('''DELETE FROM tbl_folder WHERE id = ?''', params)
+
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_folder_map():
+        folders = Folder.get_folders()
+
+        map = {}
+        for folder in folders:
+            map[folder.id] = folder
+
+        return map
+
+    @staticmethod
+    def get_folder_hierarchy():
+        folder_map = Folder.get_folder_hierarchy()
+
+        root = folder_map[1]
+        if root.name != "root" and root.id != 1 and root.parent_id != 1:
+            raise Exception("No root directory found")
+
+        for key, val in enumerate(folder_map):
+            if key != 1:
+                folder_map[val.parent_id].children[val.name] = val
+
+        return root
+
+    @staticmethod
+    def is_parent(folder, parent):
+        """
+        Returns whether parent is a parent directory of the given folder
+        :param folder:
+        :param parent:
+        :return:
+        """
+        map = Folder.get_folder_map()
+        tmp = folder
+
+        while tmp.id != 1:
+            if parent.id == tmp.id:
+                return True
+
+            tmp = map[tmp.parent_id]
+
+        return False
+
+    @staticmethod
+    def clear_db():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute('''DELETE FROM tbl_folder
+                            ''')
+
+        conn.commit()
+        conn.close()
+
+
 class FilePart:
     def __init__(self):
         self.id = -1
@@ -676,9 +854,18 @@ class Master:
 
         c.execute('''CREATE UNIQUE INDEX ux_tbl_file_part ON tbl_file_part(file_id, sequence_order)''')
 
+        c.execute('''CREATE UNIQUE INDEX ux_tbl_folder ON tbl_folder(parent_id, name)''')
+
         # end
         conn.commit()
         conn.close()
+
+        # add the root directory
+        root = Folder()
+        root.name = "root"
+        Folder.insert_folder(root)
+        root.parent_id = root.id
+        Folder.update_folder(root)
 
     def close(self):
         for node in self.nodes:
