@@ -368,7 +368,7 @@ class Folder:
 
     @staticmethod
     def get_folder_hierarchy():
-        folder_map = Folder.get_folder_hierarchy()
+        folder_map = Folder.get_folder_map()
 
         root = folder_map[1]
         if root.name != "root" and root.id != 1 and root.parent_id != 1:
