@@ -374,7 +374,7 @@ class Folder:
         if root.name != "root" and root.id != 1 and root.parent_id != 1:
             raise Exception("No root directory found")
 
-        for key, val in enumerate(folder_map):
+        for key, val in folder_map:
             if key != 1:
                 folder_map[val.parent_id].children[val.name] = val
 
