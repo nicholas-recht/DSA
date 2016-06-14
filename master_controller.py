@@ -405,8 +405,7 @@ class Folder:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        c.execute('''DELETE FROM tbl_folder
-                            ''')
+        c.execute('''DELETE FROM tbl_folder WHERE id != 1''')
 
         conn.commit()
         conn.close()
@@ -861,11 +860,21 @@ class Master:
         conn.close()
 
         # add the root directory
-        root = Folder()
-        root.name = "root"
-        Folder.insert_folder(root)
-        root.parent_id = root.id
-        Folder.update_folder(root)
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        params = (1, 1, "root")
+        c.execute('''INSERT INTO tbl_folder
+                    (  id,
+                       parent_id,
+                       name)
+                    VALUES
+                    (  ?,
+                       ?,
+                       ?)''', params)
+
+        conn.commit()
+        conn.close()
 
     def close(self):
         for node in self.nodes:
@@ -1198,6 +1207,7 @@ class Master:
                     SlaveNode.clear_db()
                     File.clear_db()
                     FilePart.clear_db()
+                    Folder.clear_db()
                     print("database cleared")
                 elif command == "show_nodes":
                     print(self.nodes)
