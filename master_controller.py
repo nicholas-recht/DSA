@@ -883,7 +883,7 @@ class Master:
             SlaveNode.update_slave_node(node)
         self.execute = False
 
-    def upload_file(self, name, bytes):
+    def upload_file(self, name, bytes, folder_id=1):
         # check if there is enough space
         if len(bytes) > self.get_total_space_available():
             raise Exception("Not enough space available")
@@ -892,7 +892,7 @@ class Master:
 
         # create the new file object
         file_obj = File()
-        file_obj.folder_id = 1
+        file_obj.folder_id = folder_id
         file_obj.upload_date = datetime.datetime.utcnow()
         file_obj.name = name
         file_obj.size = len(bytes)
