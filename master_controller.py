@@ -195,12 +195,11 @@ class File:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (file.name, file.size, util.datetime_to_s(file.upload_date), file.folder_id, file.id)
+        params = (file.name, file.size, file.folder_id, file.id)
 
         c.execute('''UPDATE tbl_file SET
                         name = ?,
                         size = ?,
-                        upload_date = ?,
                         folder_id = ?
                     WHERE id = ?''', params)
 
