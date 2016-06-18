@@ -322,6 +322,8 @@ class Folder:
         # make sure the given parent isn't actually a child of the folder
         if Folder.is_parent(parent, folder):
             raise Exception("Cannot move a folder to its own subdirectory")
+        elif folder.id == 1:
+            raise Exception("Cannot move the root folder")
 
         # open the connection
         conn = sqlite3.connect(util.database)
