@@ -1072,7 +1072,7 @@ class Master:
 
             return None
 
-    def download_part(self, node, name, rtnVal, index):
+    def download_part(self, node, name, rtn_val, index):
         try:
             # send command
             node.socket.sendall(util.s_to_bytes("DOWNLOAD"))
@@ -1104,10 +1104,10 @@ class Master:
                 bytes += chunk
                 num_got += len(chunk)
 
-            rtnVal[index] = bytes
+            rtn_val[index] = bytes
 
         except socket.error as e:
-            rtnVal[index] = str(e)
+            rtn_val[index] = str(e)
 
     def delete_file(self, id):
         try:
@@ -1125,18 +1125,18 @@ class Master:
 
             # delete each file part where the node is connected
             self.busy = True
-            rtnVal = []
+            rtn_val = []
             threads = []
             parts = []
             index = 0
             for part in file_parts:
                 if part.node_id in node_dict:
-                    rtnVal.append(None)
+                    rtn_val.append(None)
                     parts.append(part)
                     t = threading.Thread(target=self.delete_part,
                                          args=(node_dict[part.node_id],
                                                part.access_name,
-                                               rtnVal,
+                                               rtn_val,
                                                index))
                     threads.append(t)
                     t.start()
@@ -1150,7 +1150,7 @@ class Master:
             self.busy = False
 
             # check for any errors
-            for idx, val in enumerate(rtnVal):
+            for idx, val in enumerate(rtn_val):
                 part = parts[idx]
                 FilePart.delete_file_part(part)
 
@@ -1188,6 +1188,72 @@ class Master:
 
         except socket.error as e:
             errors[index] = str(e)
+
+    def search_files(self, substr):
+        file_ids = set()
+        # search each active node for their file parts
+        self.busy = True
+        rtn_val = []
+        threads = []
+        index = 0
+        for node in self.nodes:
+            rtn_val.append(None)
+            t = threading.Thread(target=self.search_file_parts,
+                                 args=(node,
+                                       substr,
+                                       rtn_val,
+                                       index))
+            threads.append(t)
+            t.start()
+            index += 1
+
+        for t in threads:
+            t.join()
+        self.busy = False
+
+        # check for any errors
+        for idx, val in enumerate(rtn_val):
+            if isinstance(val, str):
+                print(val)
+            else:
+                # get all of the unique files
+                for part in val:
+                    if part.file_id not in file_ids:
+                        file_ids.add(part.file_id)
+
+        files = [file for file in File.get_files() if file.id in file_ids]
+
+        return files
+
+    def search_file_parts(self, node, substr, rtn_val, index):
+        try:
+            # send command
+            node.socket.sendall(util.s_to_bytes("SEARCH"))
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+            if response != "OK":
+                raise socket.error("upload time out")
+            # send the name
+            node.socket.sendall(substr)
+            ready = select.select([node.socket], [], [], util.slave_response_timeout)
+            if ready[0]:
+                response = util.s_from_bytes(node.socket.recv(util.bufsize))
+            else:
+                response = "FAIL"
+
+            if response == "NONE":
+                rtn_val[index] = []
+            else:
+                names = response.split(",")
+                files = [part for part in FilePart.get_file_parts() if part.access_name in names]
+
+                rtn_val[index] = files
+
+        except socket.error as e:
+            rtn_val[index] = str(e)
 
     def listen_for_commands(self):
         if self.command_thread is None:
@@ -1253,6 +1319,17 @@ class Master:
 
                     self.delete_file(file_id)
                     print("File deleted")
+
+                elif command == "search":
+                    print("Search command received")
+                    client_socket.sendall(util.s_to_bytes("OK"))
+                    search_string = client_socket.recv(util.bufsize)
+
+                    files = self.search_files(search_string)
+                    for file in files:
+                        print(file.name)
+
+                    print("Search complete")
 
                 else:
                     print("Unrecognized command")

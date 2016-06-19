@@ -126,6 +126,31 @@ class Slave:
             self.socket.sendall(util.s_to_bytes("FAIL"))
             print(str(e))
 
+    def file_contains_substring(self, path, substr):
+        try:
+            file = open(self.storage_loc + '/' + path, mode='rb')
+            f = file.read()
+
+            if f.find(substr) != -1:
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            return False
+
+    def search_files(self):
+        search_string = self.socket.recv(util.bufsize)  # we want to use bytes because the file will be read as bytes
+
+        files = os.listdir(self.storage_loc)
+
+        matching = [file for file in files if (self.file_contains_substring(file, search_string))]
+
+        if len(matching) > 0:
+            self.socket.sendall(util.s_to_bytes(','.join(matching)))
+        else:
+            self.socket.sendall(util.s_to_bytes("NONE"))
+
     def start(self):
         while True:
             command = util.s_from_bytes(self.socket.recv(util.bufsize))
@@ -144,6 +169,9 @@ class Slave:
             elif command == "DELETE":
                 self.socket.sendall(util.s_to_bytes("OK"))
                 self.delete_file()
+            elif command == "SEARCH":
+                self.socket.sendall(util.s_to_bytes("OK"))
+                self.search_files()
             else:
                 self.socket.sendall(util.s_to_bytes("UNKNOWN"))
                 print("unrecognized command")
