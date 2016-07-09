@@ -13,21 +13,31 @@ else:
     from . import util
 
 
+class ConnectionInfo:
+    def __init__(self):
+        self.socket = None
+        self.address = None
+
+
 class SlaveNode:
     def __init__(self):
         self.socket = None
         self.address = None
         self.id = -1
         self.storage_space = 0
-        self.status = "inactive"
+        self.status = "not_set"
 
     @staticmethod
-    def get_slave_nodes():
+    def get_slave_nodes(status=None):
         # open the connection
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        c.execute("SELECT * FROM tbl_slave_node WHERE status = 'restart'")
+        if status is None:
+            c.execute("SELECT * FROM tbl_slave_node")
+        else:
+            params = (status,)
+            c.execute("SELECT * FROM tbl_slave_node WHERE status = ?", params)
 
         rows = c.fetchall()
         nodes = []
@@ -117,6 +127,7 @@ class File:
         self.size = 0
         self.upload_date = None
         self.folder_id = 1
+        self.status = None
 
     def to_string(self):
         return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date)
@@ -138,6 +149,7 @@ class File:
             file.size = row[2]
             file.upload_date = util.datetime_from_s(row[3])
             file.folder_id = row[4]
+            file.status = row[5]
             files.append(file)
 
         conn.close()
@@ -162,6 +174,7 @@ class File:
             file.size = row[2]
             file.upload_date = util.datetime_from_s(row[3])
             file.folder_id = row[4]
+            file.status = row[5]
 
         conn.close()
 
@@ -173,15 +186,17 @@ class File:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (file.name, file.size, util.datetime_to_s(file.upload_date), file.folder_id)
+        params = (file.name, file.size, util.datetime_to_s(file.upload_date), file.folder_id, file.status)
 
         c.execute('''INSERT INTO tbl_file
                          (  name,
                             size,
                             upload_date,
-                            folder_id)
+                            folder_id,
+                            status)
                          VALUES
                          (  ?,
+                            ?,
                             ?,
                             ?,
                             ?)''', params)
@@ -195,12 +210,13 @@ class File:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (file.name, file.size, file.folder_id, file.id)
+        params = (file.name, file.size, file.folder_id, file.status, file.id)
 
         c.execute('''UPDATE tbl_file SET
                         name = ?,
                         size = ?,
-                        folder_id = ?
+                        folder_id = ?,
+                        status = ?
                     WHERE id = ?''', params)
 
         conn.commit()
@@ -446,30 +462,6 @@ class FilePart:
         return file_parts
 
     @staticmethod
-    def get_lost_file_parts():
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        c.execute("SELECT * FROM tbl_file_part_lost")
-
-        rows = c.fetchall()
-        file_parts = []
-        for row in rows:
-            part = FilePart()
-            part.id = row[0]
-            part.file_id = row[1]
-            part.node_id = row[2]
-            part.access_name = row[3]
-            part.sequence_order = row[4]
-            part.size = row[5]
-            file_parts.append(part)
-
-        conn.close()
-
-        return file_parts
-
-    @staticmethod
     def get_file_part(id):
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -477,30 +469,6 @@ class FilePart:
 
         params = (id,)
         c.execute("SELECT * FROM tbl_file_part WHERE id = ?", params)
-
-        row = c.fetchone()
-        part = None
-        if row is not None:
-            part = FilePart()
-            part.id = row[0]
-            part.file_id = row[1]
-            part.node_id = row[2]
-            part.access_name = row[3]
-            part.sequence_order = row[4]
-            part.size = row[5]
-
-        conn.close()
-
-        return part
-
-    @staticmethod
-    def get_lost_file_part(id):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (id,)
-        c.execute("SELECT * FROM tbl_file_part_lost WHERE id = ?", params)
 
         row = c.fetchone()
         part = None
@@ -542,32 +510,6 @@ class FilePart:
         conn.close()
 
     @staticmethod
-    def insert_lost_file_part(part):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (part.id, part.file_id, part.node_id, part.access_name, part.sequence_order, part.size)
-
-        c.execute('''INSERT INTO tbl_file_part_lost
-                                 (  id,
-                                    file_id,
-                                    node_id,
-                                    access_name,
-                                    sequence_order,
-                                    size)
-                                 VALUES
-                                 (  ?,
-                                    ?,
-                                    ?,
-                                    ?,
-                                    ?,
-                                    ?)''', params)
-
-        conn.commit()
-        conn.close()
-
-    @staticmethod
     def update_file_part(part):
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -601,20 +543,6 @@ class FilePart:
         conn.close()
 
     @staticmethod
-    def delete_lost_file_part(part):
-        # open the connection
-        conn = sqlite3.connect(util.database)
-        c = conn.cursor()
-
-        params = (part.id,)
-
-        c.execute('''DELETE FROM tbl_file_part_lost WHERE id = ?
-                                    ''', params)
-
-        conn.commit()
-        conn.close()
-
-    @staticmethod
     def clear_db():
         # open the connection
         conn = sqlite3.connect(util.database)
@@ -622,9 +550,6 @@ class FilePart:
 
         c.execute('''DELETE FROM tbl_file_part
                             ''')
-
-        c.execute('''DELETE FROM tbl_file_part_lost
-            ''')
 
         conn.commit()
         conn.close()
@@ -650,7 +575,7 @@ class WelcomeSocket:
             # accept connections from outside
             (client_socket, address) = self.welcome_socket.accept()
 
-            client = SlaveNode()
+            client = ConnectionInfo()
             client.address = address
             client.socket = client_socket
 
@@ -680,7 +605,8 @@ class Master:
             self.setup_db()
 
         else:
-            self.nodes = SlaveNode.get_slave_nodes()
+            connected_nodes = SlaveNode.get_slave_nodes("connected")
+            self.nodes = connected_nodes
 
         # set up the welcoming socket for new threads
         print("Create welcome thread")
@@ -691,21 +617,18 @@ class Master:
         # start the synchronization period for already connected nodes
         print("Start synchronization period")
         wait_time = util.restart_window
-        while len([x for x in self.nodes if x.status == "restart"]) > 0 and wait_time > 0:
+        while len([x for x in self.nodes if x.status == "connected"]) > 0 and wait_time > 0:
             wait_time -= util.wait_interval
             time.sleep(util.wait_interval)
         print("End synchronization period")
 
-        # any nodes that haven't reconnected are now lost
-        lost_nodes = [x for x in self.nodes if x.status == "restart"]
-        for node in lost_nodes:
-            self.lose_node(node)
-
-        # any new nodes are now connected
-        new_nodes = [x for x in self.nodes if x.status == "new"]
-        for node in new_nodes:
-            node.status = "connected"
-            SlaveNode.update_slave_node(node)
+        # get our set of nodes to start with
+        for node in self.nodes:
+            if node.status == "connected":  # node never reconnected, is now lost
+                self.lose_node(node)
+            else:  # either it's a new node, or an existing one that has reconnected
+                node.status = "connected"
+                SlaveNode.update_slave_node(node)
 
         # set up command socket
         # create an INET, STREAMing socket
@@ -727,7 +650,6 @@ class Master:
     def continuous_connection(self):
         while self.execute:
             if not self.busy:
-                print("Nodes connected: ", str(len(self.nodes)))
                 threads = []
                 for node in self.nodes:
                     t = threading.Thread(target=self.check_connection, args=(node,))
@@ -749,7 +671,12 @@ class Master:
             if response != "OPEN":
                 raise socket.error("invalid response")
         except socket.error:
-            self.lose_node(node)
+            # give it time to reconnect/recover
+            node.status = "recovery"
+            print("Recovery mode")
+            time.sleep(util.slave_reconnect_window)
+            if node.status == "recovery":
+                self.lose_node(node)
 
     def lose_node(self, node):
         node.status = "lost"
@@ -759,8 +686,10 @@ class Master:
         self.nodes.remove(node)
         self.nodes_lock.release()
 
-        # start recovery stuff here
         SlaveNode.update_slave_node(node)
+
+        print("Node lost")
+        # PANIC MODE!!!! -- need to back up all of the file parts that only existed on this node
         return
 
     def accept_new_node(self, node):
@@ -768,32 +697,17 @@ class Master:
         handshake_thread = threading.Thread(target=self.handshake_node, args=(node,))
         handshake_thread.start()
 
-    def handshake_node(self, node):
+    def connect_node_node(self, connection_info):
         """
-        This function should be run in it's own thread.
+        This function should be run in it's own thread
         :param node:
         :return:
         """
-        if self.ready:
-            node.status = "connected"
-        else:
-            node.status = "new"
-
-        node.id = util.i_from_bytes(node.socket.recv(util.bufsize))
-
-        # if id == -1 then it's a new node
-        if node.id == -1:
-            SlaveNode.insert_slave_node(node)
-            print("New node connected")
-        else:
-            # check the case where connecting node doesn't give a valid id
-            existing_node = SlaveNode.get_slave_node(node.id)
-            if existing_node is None:
-                # treat it like a new node
-                SlaveNode.insert_slave_node(node)
-                print("Invalid node connected")
-            else:
-                print("Existing node connected")
+        node = SlaveNode()
+        node.address = connection_info.address
+        node.socket = connection_info.socket
+        node.status = "connected"
+        SlaveNode.insert_slave_node(node)
 
         # send id to the node
         node.socket.sendall(util.i_to_bytes(node.id))
@@ -801,6 +715,10 @@ class Master:
         node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
 
         SlaveNode.update_slave_node(node)
+
+        if not self.ready:
+            node.status = "new"
+
         # add the node to the list of nodes
         # LOCK
         self.nodes_lock.acquire()
@@ -808,6 +726,83 @@ class Master:
         self.nodes.append(node)
         # UNLOCK
         self.nodes_lock.release()
+
+    def handshake_node(self, connection_info):
+        """
+        This function should be run in it's own thread.
+        :param node:
+        :return:
+        """
+
+        id = util.i_from_bytes(connection_info.socket.recv(util.bufsize))
+
+        # if id == -1 then it's a new node
+        if id == -1:
+            self.connect_node_node(connection_info)
+            print("New node connected")
+        else:
+            # check the case where connecting node doesn't give a valid id
+            existing_node = SlaveNode.get_slave_node(id)
+            if existing_node is None:
+                # treat it like a new node
+                self.connect_node_node(connection_info)
+                print("Invalid node connected")
+            else:
+                if existing_node.status == "lost":  # the prodigal son has returned!
+                    existing_node.status = "connected"
+                    existing_node.address = connection_info.address
+                    existing_node.socket = connection_info.socket
+                    # send id to the node
+                    existing_node.socket.sendall(util.i_to_bytes(existing_node.id))
+                    # get the storage space of the new node
+                    existing_node.storage_space = util.i_from_bytes(existing_node.socket.recv(util.bufsize))
+
+                    SlaveNode.update_slave_node(existing_node)
+                    # add the node to the list of nodes
+                    # LOCK
+                    self.nodes_lock.acquire()
+                    # CRITICAL SECTION
+                    self.nodes.append(existing_node)
+                    # UNLOCK
+                    self.nodes_lock.release()
+                    print("Lost node connected")
+                    # TODO recovery stuff
+                else:
+                    # get the node in self.nodes that matches the id
+                    matches = [x for x in self.nodes if x.id == id]
+                    if len(matches) != 1:
+                        print("Error: existing node not contained in connected node list")
+                        return
+                    else:
+                        node = matches[0]
+                        if node.status == "recovery":  # good to go
+                            node.status = "connected"
+                            node.address = connection_info.address
+                            node.socket = connection_info.socket
+                            # send id to the node
+                            node.socket.sendall(util.i_to_bytes(node.id))
+                            # get the storage space of the new node
+                            node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
+
+                            SlaveNode.update_slave_node(node)
+                            print("Recovered node connected")
+                        else:
+                            if self.ready:  # during normal execution
+                                # why are we getting a new connection?? We assume it's an impostor
+                                self.connect_node_node(connection_info)
+                                print("Impostor node connected")
+                            else:  # during the connection window
+                                node.status = "connected"
+                                node.address = connection_info.address
+                                node.socket = connection_info.socket
+                                # send id to the node
+                                node.socket.sendall(util.i_to_bytes(node.id))
+                                # get the storage space of the new node
+                                node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
+
+                                SlaveNode.update_slave_node(node)
+                                node.status = "restart"
+                                print("Existing node connected")
 
     def setup_db(self):
         # open the connection
@@ -826,6 +821,7 @@ class Master:
                        size BIGINT NOT NULL,
                        upload_date TEXT NOT NULL,
                        folder_id INTEGER NOT NULL,
+                       status TEXT,
                        FOREIGN KEY(folder_id) REFERENCES tbl_folder(id))''')
 
         c.execute('''CREATE TABLE tbl_slave_node
@@ -843,16 +839,7 @@ class Master:
                        FOREIGN KEY(file_id) REFERENCES tbl_file(id) ON UPDATE CASCADE,
                        FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
 
-        c.execute(('''CREATE TABLE tbl_file_part_lost
-            (id INTEGER NOT NULL PRIMARY KEY,
-             file_id INTEGER NOT NULL,
-             node_id INTEGER NOT NULL,
-             access_name TEXT NOT NULL,
-             sequence_order INTEGER NOT NULL,
-             size INTEGER NOT NULL,
-             FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
-
-        c.execute('''CREATE UNIQUE INDEX ux_tbl_file_part ON tbl_file_part(file_id, sequence_order)''')
+        # c.execute('''CREATE UNIQUE INDEX ux_tbl_file_part ON tbl_file_part(file_id, sequence_order)''')
 
         c.execute('''CREATE UNIQUE INDEX ux_tbl_folder ON tbl_folder(parent_id, name)''')
 
@@ -879,9 +866,7 @@ class Master:
 
     def close(self):
         for node in self.nodes:
-            node.status = "restart"
             node.socket.sendall(util.s_to_bytes("CLOSE"))
-            SlaveNode.update_slave_node(node)
         self.execute = False
 
     def upload_file(self, name, bytes, folder_id=1):
@@ -1142,7 +1127,6 @@ class Master:
                     t.start()
                 else:
                     FilePart.delete_file_part(part)
-                    FilePart.insert_lost_file_part(part)
                 index += 1
 
             for t in threads:
@@ -1156,7 +1140,6 @@ class Master:
 
                 if isinstance(val, str):
                     print(val)
-                    FilePart.insert_lost_file_part(part)
 
             File.delete_file(file_obj)
 
@@ -1345,8 +1328,7 @@ class Master:
         return sum([x.storage_space for x in self.nodes])
 
     def get_node_space_available(self, node):
-        file_part_sizes = [part.size for part in FilePart.get_file_parts() if part.node_id == node.id] + \
-                          [part.size for part in FilePart.get_lost_file_parts() if part.node_id == node.id]
+        file_part_sizes = [part.size for part in FilePart.get_file_parts() if part.node_id == node.id]
         return node.storage_space - sum(file_part_sizes)
 
     def get_total_space_available(self):
