@@ -27,6 +27,9 @@ class SlaveNode:
         self.storage_space = 0
         self.status = "not_set"
 
+    def to_string(self):
+        return str(self.id) + " " + str(self.storage_space) + " " + str(self.address)
+
     @staticmethod
     def get_slave_nodes(status=None):
         # open the connection
@@ -1468,16 +1471,15 @@ class Master:
                 (client_socket, address) = self.command_socket.accept()
                 command = util.s_from_bytes(client_socket.recv(util.bufsize))
 
-                if command == "test":
-                    print("test command received")
-                elif command == "clear_database":
+                if command == "clear_database":
                     SlaveNode.clear_db()
                     File.clear_db()
                     FilePart.clear_db()
                     Folder.clear_db()
                     print("database cleared")
                 elif command == "show_nodes":
-                    print(self.nodes)
+                    for node in self.nodes:
+                        print(node.to_string())
                 elif command == "space_available":
                     print(str(self.get_total_space_available()))
                 elif command == "total_space":

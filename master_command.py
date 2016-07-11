@@ -24,7 +24,18 @@ def main(args):
 
     else:
         print("usage: master_command <command>")
-        print("available commands: \n\ttest\n\tclear_database\n\tshow_nodes")
+        print("available commands: "
+              "\n\tclear_database"
+              "\n\tshow_nodes"
+              "\n\tspace_available"
+              "\n\ttotal_space"
+              "\n\tshow_files"
+              "\n\tshow_lost_files"
+              "\n\tclose"
+              "\n\tupload [path/to/file]"
+              "\n\tdownload [file_id]"
+              "\n\tdelete [file_id]"
+              "\n\tsearch [query]")
         sys.exit()
 
 if __name__ == "__main__":
