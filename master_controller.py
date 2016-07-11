@@ -130,7 +130,7 @@ class File:
         self.status = None
 
     def to_string(self):
-        return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date)
+        return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date) + ' ' + self.status
 
     @staticmethod
     def get_files():
@@ -138,7 +138,31 @@ class File:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        c.execute("SELECT * FROM tbl_file")
+        c.execute("SELECT * FROM tbl_file WHERE status IS NULL OR status != 'lost'")
+
+        rows = c.fetchall()
+        files = []
+        for row in rows:
+            file = File()
+            file.id = row[0]
+            file.name = row[1]
+            file.size = row[2]
+            file.upload_date = util.datetime_from_s(row[3])
+            file.folder_id = row[4]
+            file.status = row[5]
+            files.append(file)
+
+        conn.close()
+
+        return files
+
+    @staticmethod
+    def get_lost_files():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file WHERE status = 'lost'")
 
         rows = c.fetchall()
         files = []
@@ -436,6 +460,7 @@ class FilePart:
         self.access_name = ""
         self.sequence_order = -1
         self.size = 0
+        self.status = None
 
     @staticmethod
     def get_file_parts():
@@ -443,7 +468,7 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        c.execute("SELECT * FROM tbl_file_part")
+        c.execute("SELECT * FROM tbl_file_part WHERE status IS NULL OR status != 'lost'")
 
         rows = c.fetchall()
         file_parts = []
@@ -455,6 +480,32 @@ class FilePart:
             part.access_name = row[3]
             part.sequence_order = row[4]
             part.size = row[5]
+            part.status = row[6]
+            file_parts.append(part)
+
+        conn.close()
+
+        return file_parts
+
+    @staticmethod
+    def get_lost_file_parts():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file_part WHERE status = 'lost'")
+
+        rows = c.fetchall()
+        file_parts = []
+        for row in rows:
+            part = FilePart()
+            part.id = row[0]
+            part.file_id = row[1]
+            part.node_id = row[2]
+            part.access_name = row[3]
+            part.sequence_order = row[4]
+            part.size = row[5]
+            part.status = row[6]
             file_parts.append(part)
 
         conn.close()
@@ -480,6 +531,7 @@ class FilePart:
             part.access_name = row[3]
             part.sequence_order = row[4]
             part.size = row[5]
+            part.status = row[6]
 
         conn.close()
 
@@ -491,16 +543,18 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size)
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size, part.status)
 
         c.execute('''INSERT INTO tbl_file_part
                              (  file_id,
                                 node_id,
                                 access_name,
                                 sequence_order,
-                                size)
+                                size,
+                                status)
                              VALUES
                              (  ?,
+                                ?,
                                 ?,
                                 ?,
                                 ?,
@@ -515,14 +569,15 @@ class FilePart:
         conn = sqlite3.connect(util.database)
         c = conn.cursor()
 
-        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size, part.id)
+        params = (part.file_id, part.node_id, part.access_name, part.sequence_order, part.size, part.status, part.id)
 
         c.execute('''UPDATE tbl_file_part SET
                             file_id = ?,
                             node_id = ?,
                             access_name = ?,
                             sequence_order = ?,
-                            size = ?
+                            size = ?,
+                            status = ?
                      WHERE id = ?''', params)
 
         conn.commit()
@@ -690,6 +745,90 @@ class Master:
 
         print("Node lost")
         # PANIC MODE!!!! -- need to back up all of the file parts that only existed on this node
+        all_parts = FilePart.get_file_parts()
+        other_parts = []
+        node_parts = []
+        # separate the parts contained in the node and not
+        for part in all_parts:
+            if part.node_id == node.id:
+                node_parts.append(part)
+            else:
+                other_parts.append(part)
+
+        # set each of these parts to be lost
+        for part in node_parts:
+            part.status = 'lost'
+            FilePart.update_file_part(part)
+
+        # group the other parts by the file_id and sequence_number
+        file_part_map = {}
+        for part in other_parts:
+            if part.file_id not in file_part_map:
+                file_part_map[part.file_id] = {}
+            if part.sequence_order not in file_part_map[part.file_id]:
+                file_part_map[part.file_id][part.sequence_order] = []
+            file_part_map[part.file_id][part.sequence_order].append(part)
+
+        # try to recover any parts on the node that can be
+        for part in node_parts:
+            try:
+                # if the file_id isn't in the map, then no other copies exist and the file is lost
+                if part.file_id not in file_part_map or part.sequence_order not in file_part_map[part.file_id]:
+                    raise Exception("No other copies of a necessary part exist")
+
+            except Exception as e:
+                file = File.get_file(part.file_id)
+                print("File (" + file.to_string() + ") lost: " + str(e))
+                file.status = "lost"
+                File.update_file(file)
+                continue
+
+            try:
+                # if we don't have enough copies to reach the redundancy level, we need try
+                # and back up what we can
+                cur_level = len(file_part_map[part.file_id][part.sequence_order])
+                if cur_level < util.redundant_level:
+                    # get the nodes that don't contain a copy
+                    copy_ids = [y.node_id for y in file_part_map[part.file_id]]
+                    nodes = [x for x in self.nodes if x.id not in copy_ids]
+                    if len(nodes) + cur_level < util.redundant_level:
+                        raise Exception("Not enough nodes exist to reach the redundancy level")
+                    else:
+                        # try and make new copies
+                        copy_part = file_part_map[part.file_id][part.sequence_order][0]
+                        node = self.get_connected_node(copy_part.node_id)
+                        rtn = [None] * 1
+                        self.download_part(node, copy_part.access_name, rtn, 0)
+                        if isinstance(rtn[0], str):
+                            raise Exception(rtn[0])
+                        else:
+                            contents = rtn[0]
+                            # copy the file_part to each other node
+                            while cur_level < util.redundant_level:
+                                node = nodes[-1]
+                                nodes.pop()
+                                self.upload_part(node, copy_part.access_name, contents, rtn, 0)
+                                if rtn[0] is not None:
+                                    raise Exception(rtn[0])
+                                new_part = FilePart()
+                                new_part.node_id = node.id
+                                new_part.file_id = copy_part.file_id
+                                new_part.access_name = copy_part.access_name
+                                new_part.sequence_order = copy_part.sequence_order
+                                new_part.size = copy_part.size
+                                FilePart.insert_file_part(new_part)
+
+                                cur_level += 1
+
+                # else we're good
+
+            except Exception as e:
+                file = File.get_file(part.file_id)
+                print("File (" + file.to_string() + ") in danger: " + str(e))
+                file.status = "danger"
+                File.update_file(file)
+                continue
+
         return
 
     def accept_new_node(self, node):
@@ -733,7 +872,6 @@ class Master:
         :param node:
         :return:
         """
-
         id = util.i_from_bytes(connection_info.socket.recv(util.bufsize))
 
         # if id == -1 then it's a new node
@@ -757,6 +895,47 @@ class Master:
                     # get the storage space of the new node
                     existing_node.storage_space = util.i_from_bytes(existing_node.socket.recv(util.bufsize))
 
+                    # update all parts on the node to no longer be lost
+                    parts = [part for part in FilePart.get_lost_file_parts() if part.node_id == existing_node.id]
+                    for part in parts:
+                        part.status = None
+                        FilePart.update_file_part(part)
+
+                    # search each lost file and see if those files are no longer lost
+                    lost_files = File.get_lost_files()
+                    for file in lost_files:
+                        # get the max sequence_number
+                        all_parts = [part.sequence_order for part in FilePart.get_file_parts() if part.file_id == file.id] + \
+                                    [part.sequence_order for part in FilePart.get_lost_file_parts() if part.file_id == file.id]
+                        max_sequence_number = max(all_parts)
+
+                        # map the file parts by sequence_number to make sure we have enough copies of each
+                        parts = [part for part in FilePart.get_file_parts() if part.file_id == file.id]
+                        order_map = {}
+                        for part in parts:
+                            if part.sequence_order not in order_map:
+                                order_map[part.sequence_order] = 0
+                            order_map[part.sequence_order] += 1
+
+                        # make sure there aren't any missing sequence numbers
+                        all_accounted_for = True
+                        redundancy_level = True
+                        for sequence_number in range(max_sequence_number + 1):
+                            if sequence_number not in order_map:
+                                all_accounted_for = False
+                                redundancy_level = False
+                                break
+                            elif order_map[sequence_number] < util.redundant_level:
+                                redundancy_level = False
+                        # do we have enough copies to have the redundancy level?
+                        if redundancy_level:
+                            file.status = None
+                            File.update_file(file)
+                        # do we have at least enough to no longer be a lost file?
+                        elif all_accounted_for:
+                            file.status = "danger"
+                            File.update_file(file)
+
                     SlaveNode.update_slave_node(existing_node)
                     # add the node to the list of nodes
                     # LOCK
@@ -766,16 +945,26 @@ class Master:
                     # UNLOCK
                     self.nodes_lock.release()
                     print("Lost node connected")
-                    # TODO recovery stuff
                 else:
-                    # get the node in self.nodes that matches the id
-                    matches = [x for x in self.nodes if x.id == id]
-                    if len(matches) != 1:
-                        print("Error: existing node not contained in connected node list")
-                        return
+                    node = self.get_connected_node(id)
+
+                    if node.status == "recovery":  # good to go
+                        node.status = "connected"
+                        node.address = connection_info.address
+                        node.socket = connection_info.socket
+                        # send id to the node
+                        node.socket.sendall(util.i_to_bytes(node.id))
+                        # get the storage space of the new node
+                        node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
+
+                        SlaveNode.update_slave_node(node)
+                        print("Recovered node connected")
                     else:
-                        node = matches[0]
-                        if node.status == "recovery":  # good to go
+                        if self.ready:  # during normal execution
+                            # why are we getting a new connection?? We assume it's an impostor
+                            self.connect_node_node(connection_info)
+                            print("Impostor node connected")
+                        else:  # during the connection window
                             node.status = "connected"
                             node.address = connection_info.address
                             node.socket = connection_info.socket
@@ -785,24 +974,15 @@ class Master:
                             node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
 
                             SlaveNode.update_slave_node(node)
-                            print("Recovered node connected")
-                        else:
-                            if self.ready:  # during normal execution
-                                # why are we getting a new connection?? We assume it's an impostor
-                                self.connect_node_node(connection_info)
-                                print("Impostor node connected")
-                            else:  # during the connection window
-                                node.status = "connected"
-                                node.address = connection_info.address
-                                node.socket = connection_info.socket
-                                # send id to the node
-                                node.socket.sendall(util.i_to_bytes(node.id))
-                                # get the storage space of the new node
-                                node.storage_space = util.i_from_bytes(node.socket.recv(util.bufsize))
+                            node.status = "restart"
+                            print("Existing node connected")
 
-                                SlaveNode.update_slave_node(node)
-                                node.status = "restart"
-                                print("Existing node connected")
+    def get_connected_node(self, id):
+        matches = [x for x in self.nodes if x.id == id]
+        if len(matches) != 1:
+            raise Exception("Error: existing node not contained in connected node list")
+        else:
+            return matches[0]
 
     def setup_db(self):
         # open the connection
@@ -836,6 +1016,7 @@ class Master:
                        access_name TEXT NOT NULL,
                        sequence_order INTEGER NOT NULL,
                        size INTEGER NOT NULL,
+                       status TEXT,
                        FOREIGN KEY(file_id) REFERENCES tbl_file(id) ON UPDATE CASCADE,
                        FOREIGN KEY(node_id) REFERENCES tbl_slave_node(id))'''))
 
@@ -870,11 +1051,36 @@ class Master:
         self.execute = False
 
     def upload_file(self, name, bytes, folder_id=1):
-        # check if there is enough space
-        if len(bytes) > self.get_total_space_available():
-            raise Exception("Not enough space available")
+        # find which nodes have enough space to be used to store the file
+        file_size = len(bytes)
+        redundant_level = util.redundant_level
+        nodes = []
+        if len(self.nodes) == 1:
+            redundant_level = 1
 
-        # TODO check each node individually and make sure it has enough space
+        while redundant_level > 0:
+            enough_space = False
+            nodes = [node for node in self.nodes]
+            while len(nodes) > 0:
+                split_size = math.ceil(file_size / len(nodes)) * redundant_level
+                all_good = True
+                for node in nodes:
+                    if self.get_node_space_available(node) < split_size:
+                        all_good = False
+                        nodes.remove(node)
+                        break
+                if all_good:
+                    enough_space = True
+                    break
+            if enough_space:
+                break
+            else:
+                redundant_level -= 1
+
+        if redundant_level == 0:
+            raise Exception("Not enough space available")
+        elif len(nodes) == 1:
+            redundant_level = 1
 
         # create the new file object
         file_obj = File()
@@ -882,68 +1088,79 @@ class Master:
         file_obj.upload_date = datetime.datetime.utcnow()
         file_obj.name = name
         file_obj.size = len(bytes)
+        if redundant_level == 1:
+            file_obj.status = "danger"
 
         File.insert_file(file_obj)
 
         # split the file into parts
-        num_splits = len(self.nodes)
+        num_splits = len(nodes)
         if num_splits > 0:
             split_size = math.ceil(file_obj.size / num_splits)
-            index = 0
-            array_index = 0
-            parts = [None] * num_splits
-            part_bytes = [None] * num_splits
-            while index < num_splits:
-                part_bytes[index] = bytes[array_index:array_index + split_size]
+            # make a copy for each redundant_level
+            for i in range(redundant_level):
+                index = 0
+                array_index = 0
+                parts = [None] * num_splits
+                part_bytes = [None] * num_splits
+                while index < num_splits:
+                    part_bytes[index] = bytes[array_index:array_index + split_size]
 
-                part = FilePart()
-                part.node_id = self.nodes[index].id
-                part.file_id = file_obj.id
-                part.sequence_order = index
-                part.access_name = str(file_obj.id) + "_" + str(index)
-                part.size = len(part_bytes[index])
+                    part = FilePart()
+                    part.node_id = nodes[index].id
+                    part.file_id = file_obj.id
+                    part.sequence_order = index
+                    part.access_name = str(file_obj.id) + "_" + str(index)
+                    part.size = len(part_bytes[index])
 
-                parts[index] = part
+                    parts[index] = part
 
-                index += 1
-                array_index += split_size
+                    index += 1
+                    array_index += split_size
 
-            # send each part to the slave nodes
-            self.busy = True
-            msgs = [None] * num_splits
-            threads = [None] * num_splits
-            index = 0
-            while index < num_splits:
-                t = threading.Thread(target=self.upload_part,
-                                     args=(self.nodes[index],
-                                           parts[index].access_name,
-                                           part_bytes[index],
-                                           msgs,
-                                           index))
-                threads[index] = t
-                t.start()
-                index += 1
-            for t in threads:
-                t.join()
+                # send each part to the slave nodes
+                self.busy = True
+                msgs = [None] * num_splits
+                threads = [None] * num_splits
+                index = 0
+                while index < num_splits:
+                    t = threading.Thread(target=self.upload_part,
+                                         args=(nodes[index],
+                                               parts[index].access_name,
+                                               part_bytes[index],
+                                               msgs,
+                                               index))
+                    threads[index] = t
+                    t.start()
+                    index += 1
+                for t in threads:
+                    t.join()
 
-            self.busy = False
-            # check for any errors
-            errors = [x for x in msgs if x is not None]
-            if len(errors) > 0:
-                print("Error sending file")
-                for error in errors:
-                    print(error)
-                # TODO delete any parts that were successfully sent
-                # TODO delete the file obj from the database
-            else:
-                for part in parts:
-                    FilePart.insert_file_part(part)
+                self.busy = False
+                # check for any errors
+                errors = [x for x in msgs if x is not None]
+                if len(errors) > 0:
+                    errmsg = ""
+                    for error in errors:
+                        errmsg += error
+                    File.delete_file(file_obj)
+                    raise Exception("Error sending file: " + errmsg)
+                else:
+                    for part in parts:
+                        FilePart.insert_file_part(part)
 
-                # return the file_obj if everything was successfully completed
-                return file_obj
+                # rotate all of the nodes so we don't put the same file parts in each
+                rotate_nodes = [None] * num_splits
+                for i_node in range(num_splits):
+                    rotate_nodes[i_node] = nodes[(i_node + 1) % num_splits]
+                nodes = rotate_nodes
+
+            # return the file_obj if everything was successfully completed
+            return file_obj
 
         else:
-            print("Error: no connected nodes")
+            File.delete_file(file_obj)
+            raise Exception("Error: no connected nodes")
 
         return None
 
@@ -1040,11 +1257,11 @@ class Master:
             # check for any errors
             part_contents = [x for x in rtnVal if isinstance(x, bytearray)]
             if len(part_contents) < num_parts:
-                print("Error receiving file")
+                msg = ""
                 errors = [x for x in rtnVal if isinstance(x, str)]
                 for error in errors:
-                    print(error)
-                    # TODO handle error better
+                    msg += error
+                raise Exception("Error receiving file: " + msg)
             else:
                 file_contents = bytearray()
                 for part_content in part_contents:
@@ -1267,6 +1484,10 @@ class Master:
                     print(str(self.get_total_size()))
                 elif command == "show_files":
                     files = File.get_files()
+                    for file in files:
+                        print(file.to_string())
+                elif command == "show_lost_files":
+                    files = File.get_lost_files()
                     for file in files:
                         print(file.to_string())
                 elif command == "close":
