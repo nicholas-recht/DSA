@@ -1515,7 +1515,13 @@ class Master:
                     client_socket.sendall(util.s_to_bytes("OK"))
                     file_id = int(util.s_from_bytes(client_socket.recv(util.bufsize)))
 
-                    self.download_file(file_id)
+                    bytes = self.download_file(file_id)
+                    file_obj = File.get_file(file_id)
+
+                    file = open(file_obj.name, mode='wb')
+                    file.write(bytes)
+                    file.close()
+
                     print("File downloaded")
 
                 elif command == "delete":
