@@ -27,6 +27,9 @@ class SlaveNode:
         self.storage_space = 0
         self.status = "not_set"
 
+        # locks
+        self.socket_lock = threading.Lock()
+
     def to_string(self):
         return str(self.id) + " " + str(self.storage_space) + " " + str(self.address)
 
@@ -166,6 +169,30 @@ class File:
         c = conn.cursor()
 
         c.execute("SELECT * FROM tbl_file WHERE status = 'lost'")
+
+        rows = c.fetchall()
+        files = []
+        for row in rows:
+            file = File()
+            file.id = row[0]
+            file.name = row[1]
+            file.size = row[2]
+            file.upload_date = util.datetime_from_s(row[3])
+            file.folder_id = row[4]
+            file.status = row[5]
+            files.append(file)
+
+        conn.close()
+
+        return files
+
+    @staticmethod
+    def get_danger_files():
+        # open the connection
+        conn = sqlite3.connect(util.database)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM tbl_file WHERE status = 'danger'")
 
         rows = c.fetchall()
         files = []
@@ -719,6 +746,7 @@ class Master:
 
     def check_connection(self, node):
         try:
+            node.socket_lock.acquire()
             # send connect command
             node.socket.sendall(util.s_to_bytes("OPEN"))
             ready = select.select([node.socket], [], [], util.master_continuous_wait - .2)
@@ -726,6 +754,9 @@ class Master:
                 response = util.s_from_bytes(node.socket.recv(util.bufsize))
             else:
                 response = "FAIL"
+
+            node.socket_lock.release()
+
             if response != "OPEN":
                 raise socket.error("invalid response")
         except socket.error:
@@ -792,7 +823,7 @@ class Master:
                 cur_level = len(file_part_map[part.file_id][part.sequence_order])
                 if cur_level < util.redundant_level:
                     # get the nodes that don't contain a copy
-                    copy_ids = [y.node_id for y in file_part_map[part.file_id]]
+                    copy_ids = [y.node_id for y in file_part_map[part.file_id][part.sequence_order]]
                     nodes = [x for x in self.nodes if x.id not in copy_ids]
                     if len(nodes) + cur_level < util.redundant_level:
                         raise Exception("Not enough nodes exist to reach the redundancy level")
@@ -904,8 +935,8 @@ class Master:
                         part.status = None
                         FilePart.update_file_part(part)
 
-                    # search each lost file and see if those files are no longer lost
-                    lost_files = File.get_lost_files()
+                    # search each lost file (and file in danger) and see if those files are no longer lost/in danger
+                    lost_files = File.get_lost_files() + File.get_danger_files()
                     for file in lost_files:
                         # get the max sequence_number
                         all_parts = [part.sequence_order for part in FilePart.get_file_parts() if part.file_id == file.id] + \
@@ -1050,7 +1081,9 @@ class Master:
 
     def close(self):
         for node in self.nodes:
+            node.socket_lock.acquire()
             node.socket.sendall(util.s_to_bytes("CLOSE"))
+            node.socket_lock.release()
         self.execute = False
 
     def upload_file(self, name, bytes, folder_id=1):
@@ -1168,6 +1201,7 @@ class Master:
         return None
 
     def upload_part(self, node, name, bytes, errors, index):
+        node.socket_lock.acquire()
         try:
             # send command
             node.socket.sendall(util.s_to_bytes("UPLOAD"))
@@ -1208,6 +1242,9 @@ class Master:
 
         except socket.error as e:
             errors[index] = str(e)
+
+        finally:
+            node.socket_lock.release()
 
     def download_file(self, id):
         try:
@@ -1278,6 +1315,7 @@ class Master:
             return None
 
     def download_part(self, node, name, rtn_val, index):
+        node.socket_lock.acquire()
         try:
             # send command
             node.socket.sendall(util.s_to_bytes("DOWNLOAD"))
@@ -1313,6 +1351,9 @@ class Master:
 
         except socket.error as e:
             rtn_val[index] = str(e)
+
+        finally:
+            node.socket_lock.release()
 
     def delete_file(self, id):
         try:
@@ -1369,6 +1410,7 @@ class Master:
             return None
 
     def delete_part(self, node, name, errors, index):
+        node.socket_lock.acquire()
         try:
             # send command
             node.socket.sendall(util.s_to_bytes("DELETE"))
@@ -1391,6 +1433,9 @@ class Master:
 
         except socket.error as e:
             errors[index] = str(e)
+
+        finally:
+            node.socket_lock.release()
 
     def search_files(self, substr):
         file_ids = set()
@@ -1429,6 +1474,7 @@ class Master:
         return files
 
     def search_file_parts(self, node, substr, rtn_val, index):
+        node.socket_lock.acquire()
         try:
             # send command
             node.socket.sendall(util.s_to_bytes("SEARCH"))
@@ -1457,6 +1503,9 @@ class Master:
 
         except socket.error as e:
             rtn_val[index] = str(e)
+
+        finally:
+            node.socket_lock.release()
 
     def listen_for_commands(self):
         if self.command_thread is None:
