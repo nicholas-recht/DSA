@@ -133,7 +133,7 @@ class File:
         self.status = None
 
     def to_string(self):
-        return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date) + ' ' + self.status
+        return str(self.id) + " " + self.name + " " + util.datetime_to_s(self.upload_date) + ' ' + str(self.status)
 
     @staticmethod
     def get_files():

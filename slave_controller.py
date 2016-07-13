@@ -33,7 +33,7 @@ class Slave:
         while True:
             try:
                 self.socket = socket.create_connection((self.address, self.port), util.slave_connect_timeout)
-                self.socket.settimeout(util.slave_socket_timeout)
+                self.socket.settimeout(None)
                 break
             except socket.error as e:
                 print(str(e))
