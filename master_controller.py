@@ -1250,7 +1250,9 @@ class Master:
         try:
             file_obj = File.get_file(id)
             if file_obj is None:
-                raise Exception("The requested file does not exist")
+                raise Exception("The requested file does not exist.")
+            if file_obj.status == "lost":
+                raise Exception("The selected file is currently unavailable for download.")
 
             # get all the file parts
             file_parts = [x for x in FilePart.get_file_parts() if x.file_id == file_obj.id]
