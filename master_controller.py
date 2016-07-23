@@ -839,11 +839,15 @@ class Master:
                             contents = rtn[0]
                             # copy the file_part to each other node
                             while cur_level < util.redundant_level:
+                                rtn[0] = None
+
                                 node = nodes[-1]
                                 nodes.pop()
+
                                 self.upload_part(node, copy_part.access_name, contents, rtn, 0)
                                 if rtn[0] is not None:
                                     raise Exception(rtn[0])
+
                                 new_part = FilePart()
                                 new_part.node_id = node.id
                                 new_part.file_id = copy_part.file_id
