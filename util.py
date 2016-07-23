@@ -10,10 +10,11 @@ wait_interval = .1
 command_port = 18981
 slave_connect_wait = 1.0
 slave_connect_timeout = 10.0
-master_continuous_wait = 1.0
+master_continuous_wait = 3.0
 slave_response_timeout = 1.0
 slave_reconnect_window = 10.0
 redundant_level = 2
+
 
 def i_from_bytes(val):
     """

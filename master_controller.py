@@ -749,7 +749,7 @@ class Master:
             node.socket_lock.acquire()
             # send connect command
             node.socket.sendall(util.s_to_bytes("OPEN"))
-            ready = select.select([node.socket], [], [], util.master_continuous_wait - .2)
+            ready = select.select([node.socket], [], [], util.master_continuous_wait)
             if ready[0]:
                 response = util.s_from_bytes(node.socket.recv(util.bufsize))
             else:
@@ -763,6 +763,11 @@ class Master:
             # give it time to reconnect/recover
             node.status = "recovery"
             print("Recovery mode")
+
+            # close the socket so the client can attempt to reconnect
+            node.socket.shutdown(socket.SHUT_RDWR)
+            node.socket.close()
+
             time.sleep(util.slave_reconnect_window)
             if node.status == "recovery":
                 self.lose_node(node)
