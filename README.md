@@ -10,13 +10,15 @@ Though this module does provide access to the functionality of the software thro
 
 Each node in the system is individually configured to connect to the master controller. In this way, the master controller truly is a "server" in that it simply waits for new connections from slave nodes to add to its pool. Each node will initiate the connection upon program startup. 
 
-To configure each node, each must include a file called "config.dsa" in the location of the slave_controller.py file, which is a simple text file in the following format:
+To configure each node, each must include a file called "config.dsa" in the location of the slave_controller.py file, which is a simple text file in the following format:  
+
     address_of_master_controller  
     port_of_welcoming_socket  
     storage_space_in_bytes  
     path/to/locale/storage/space  
 
-For example:
+For example:  
+
     192.168.1.1  
     15719  
     100000000  
